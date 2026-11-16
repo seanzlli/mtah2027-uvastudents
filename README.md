@@ -1,3 +1,74 @@
+# UvAStudents: More than a Hack 2027, Phase 1 submission
+
+Ball possession (`H` / `A` / `D` for every frame) from the automatic tracking and the Smart
+Tagging set pieces. The model is rule-based, with no training data. It is the starter baseline
+plus three changes: dead ball before restarts, hysteresis possession switching, and
+missing-ball handling.
+
+- **[TECHNICAL.md](TECHNICAL.md):** the technical document. Covers the approach, assets, rules,
+  limitations and reproduction.
+- **[NOTES.md](NOTES.md):** the development log, with parameter reasoning and sanity-check scores.
+
+## Install
+
+Tested with Python 3.13.13 on macOS arm64.
+
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+`requirements.txt` pins exact versions: numpy 2.5.4, pandas 3.1.0 and their dependencies.
+
+## Data
+
+The match data is gated and **not** in this repository. See [DATA.md](DATA.md) for how to get
+it. Unpack it into `./data`, or point `MTAH_DATA_DIR` at it. Only these three tactical files
+are read:
+
+```
+data/tactical/BAR-ATH_tactical_atd.txt
+data/tactical/BAR-ATH_tactical_atd.xml
+data/tactical/BAR-ATH_tactical_smart_tagging.xml
+```
+
+## Run
+
+```bash
+python my_model.py
+```
+
+This writes `evaluation/results/UvAStudents.csv`: 199,319 rows, built from scratch in about
+3 s. It is deterministic, with no cache and no randomness. The expected SHA-256 is
+`56ded60ba2daef692949575dc7dfa4be4aa8f5b9ed2302eee7f02c4a3e8cd0fa`. Use `shasum -a 256`, or
+`sha256sum` on Linux.
+
+## Check
+
+```bash
+python evaluation/validate_submission.py evaluation/results/UvAStudents.csv   # official format checks
+python selftest.py      # 14 checks: baseline reproduction, validity, reproducibility, repo hygiene
+./check.sh              # validator + scoreboard on the public 5 minutes (sanity check only)
+```
+
+## What we added
+
+| file | purpose |
+|---|---|
+| `my_model.py` | the model; `PARAMS` lists every value with its football reason; `--steps` runs any subset of the three improvements |
+| `selftest.py` | one-command correctness checks |
+| `check.sh` | validator plus scoreboard |
+| `analysis/data_stats.py` | aggregate input-data statistics used in the design (no ground truth) |
+| `TECHNICAL.md`, `NOTES.md` | documentation |
+
+Everything else is the organisers' starter repository, unchanged apart from `requirements.txt`
+(pinned), `.gitignore` and this section of the README.
+
+---
+
+*The rest of this README is the organisers' original challenge description, unchanged.*
+
 # More than a Hack 2027 — Phase 1: Ball Possession
 
 **Organised by [Metrica Sports](https://metrica-sports.com), [FC Barcelona](https://www.fcbarcelona.com)
