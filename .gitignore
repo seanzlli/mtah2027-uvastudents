@@ -62,3 +62,7 @@ __pycache__/
 venv/
 env/
 .DS_Store
+
+# derived tracking (old my_model.py cache location; it no longer caches) -- never commit
+cache/
+.ipynb_checkpoints/

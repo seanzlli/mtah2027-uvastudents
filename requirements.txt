@@ -1,10 +1,16 @@
-# Everything the evaluation needs. Deliberately two lines.
+# Exact versions used to produce evaluation/results/UvAStudents.csv. Tested with Python 3.13.13.
 #
-# The scorer is dependency-light on purpose: no sklearn, no torch, nothing that pins a Python
-# version. It runs under 3.8 and 3.11 alike and produces identical output, so "it scored
-# differently on my machine" is not a conversation anyone has to have.
+#     pip install -r requirements.txt
+#     python my_model.py
 #
-# Optional tooling -- the ATD loader and anything that opens the video -- lives in
-# requirements-starter.txt.
-numpy
-pandas
+# my_model.py needs numpy only; pandas (and its dependencies below) is for the official
+# validator/scorer in evaluation/ and for selftest.py. Everything is pinned, transitive
+# dependencies included, so the same file is reproduced byte for byte.
+#
+# Optional tooling -- the kloppy loaders and the notebooks -- lives in requirements-starter.txt
+# and is not needed to regenerate or check the submission.
+numpy==2.5.4
+pandas==3.1.0
+python-dateutil==3.0.0
+six==1.17.0
+tzdata==2026.5
