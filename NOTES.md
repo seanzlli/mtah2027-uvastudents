@@ -292,9 +292,12 @@ Each idea was scored once after it was written. (a) was scored twice; see its re
 | baseline_smooth50 | 0.6207 | 0.3256 | 26 | 10.8 | 594 (7.2 s) |
 | + (a) restarts | 0.6519 | 0.3545 | 27 | 10.3 | 568 (6.9 s) |
 | + (b) hysteresis | 0.6818 | 0.4824 | 17 | 16.3 | 259 (15.2 s) |
-| **+ (c) missing ball = submission** | **0.7277** | **0.4941** | 17 | 16.0 | 254 (14.4 s) |
+| + (c) missing ball (previous submission, tag `v1-fallback`) | 0.7277 | 0.4941 | 17 | 16.0 | 254 (14.4 s) |
+| + (d) second-half kick-off | 0.7277 | 0.4941 | 17 | 16.0 | 254 (14.4 s) |
+| **+ (e) more dead-ball evidence = submission** | **0.7277** | **0.4941** | 17 | 16.0 | 257 (13.9 s) |
 
-Ground truth (public): 17 possessions of mean 14.2 s.
+Ground truth (public): 17 possessions of mean 14.2 s. Per-class F1 for (c), (d) and (e):
+H 0.8587, A 0.8227, D 0.5016. Steps (d) and (e) change no frame inside the public window.
 
 **Noise.** `run_evaluation.py --bootstrap 1000` gives a spellF1 band of **~0.33** on the public
 window (17 possessions). None of the gaps above can be called significant there. The case for
@@ -313,18 +316,25 @@ realistic, not on these numbers.
   environment the file was built in, and `pip check` reports no conflicts. A fresh virtualenv
   install from these pins has not been tried.
 - **Two runs, same file.** Deleting the output and running twice gives the same SHA-256:
-  `56ded60ba2daef692949575dc7dfa4be4aa8f5b9ed2302eee7f02c4a3e8cd0fa`. Anyone with the data
-  bundle can check that this hash reproduces.
-- **Validator:** OK, 199,319 rows. `selftest.py`: 14 checks, 0 FAIL, 0 WARN.
+  `150bad7eee44dd9854745fe38891e54e3a23206af0c9e3e9cc7ea07ea8c67c59`. Anyone with the data
+  bundle can check that this hash reproduces. `--steps abc` still reproduces the previous
+  submission (`56ded60b…cd0fa`) exactly.
+- **Validator:** OK, 199,319 rows, 257 possessions of mean 13.9 s. `selftest.py`: 14 checks,
+  0 FAIL, 0 WARN.
 
 ## Limitations / ideas not done
 
-- **Restart stoppages are too short for goal kicks (median 2.8 s) and throw-ins (5 s).** The
-  walk-back probably stops at the ball being played back to the taker, or the strike detector
-  fires on the ball going out.
-- **Untagged stoppages with the ball visible are missed.** For example, a free kick with the
-  ball standing still in view. The tagging lists only 5 free kicks and 26 throw-ins. A generic
-  detector would be "field at walking pace + stationary ball for ≥ 2 s".
+- **Restart stoppages are still short for goal kicks (median 5.2 s) and throw-ins (7.5 s).**
+  Step (e) lengthened them from 2.8 s and 5 s. The walk-back probably still stops at the ball
+  being played back to the taker.
+- **Untagged fouls with the ball visible are missed.** For example, a free kick with the ball
+  standing still in view: the tagging lists only 5 free kicks. Step (e) catches untagged
+  throw-ins and goal kicks when the ball is seen leaving the pitch. A generic detector would be
+  "field at walking pace + stationary ball for ≥ 2 s".
+- **Learned model + Viterbi.** Train a per-frame H/A/D classifier on external labelled matches
+  (for example SkillCorner open data), never this one, with the same physical features. Then
+  decode with Viterbi over an H/A/D hidden Markov model, with transition costs fitted on those
+  matches, in place of the hand-written hysteresis.
 - **Evidence covers 27% of graded frames.** Possession across long live stretches without the
   ball relies on carrying. Team shape (which side is pushing up) could fill in.
 - **Smart Tagging `Team` tags on phases are unused.** They could give a prior on the possessor

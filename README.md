@@ -2,8 +2,13 @@
 
 Ball possession (`H` / `A` / `D` for every frame) from the automatic tracking and the Smart
 Tagging set pieces. The model is rule-based, with no training data. It is the starter baseline
-plus three changes: dead ball before restarts, hysteresis possession switching, and
-missing-ball handling.
+plus five changes:
+
+- dead ball before restarts;
+- hysteresis possession switching;
+- missing-ball handling;
+- the published second-half kick-off;
+- more dead-ball evidence (ball out of play, set-piece windows, goals).
 
 - **[TECHNICAL.md](TECHNICAL.md):** the technical document. Covers the approach, assets, rules,
   limitations and reproduction.
@@ -41,7 +46,7 @@ python my_model.py
 
 This writes `evaluation/results/UvAStudents.csv`: 199,319 rows, built from scratch in about
 3 s. It is deterministic, with no cache and no randomness. The expected SHA-256 is
-`56ded60ba2daef692949575dc7dfa4be4aa8f5b9ed2302eee7f02c4a3e8cd0fa`. Use `shasum -a 256`, or
+`150bad7eee44dd9854745fe38891e54e3a23206af0c9e3e9cc7ea07ea8c67c59`. Use `shasum -a 256`, or
 `sha256sum` on Linux.
 
 ## Check
@@ -56,9 +61,10 @@ python selftest.py      # 14 checks: baseline reproduction, validity, reproducib
 
 | file | purpose |
 |---|---|
-| `my_model.py` | the model; `PARAMS` lists every value with its football reason; `--steps` runs any subset of the three improvements |
+| `my_model.py` | the model; `PARAMS` lists every value with its football reason; `--steps` runs any subset of the five improvements (`abcde`) |
 | `selftest.py` | one-command correctness checks |
 | `check.sh` | validator plus scoreboard |
+| `analysis/compare.py` | scores two step sets side by side: scoreboard numbers and per-class F1 only |
 | `analysis/data_stats.py` | aggregate input-data statistics used in the design (no ground truth) |
 | `TECHNICAL.md`, `NOTES.md` | documentation |
 

@@ -7,7 +7,7 @@ Code: <https://github.com/seanzlli/mtah2027-uvastudents> · one command: `python
 
 We label every frame of the match as `H`, `A` or `D` with a transparent, rule-based model built
 on the automatic tracking and the Smart Tagging set pieces. It has no learned components and no
-training data. It is the starter baseline (nearest player to the ball), changed in three ways:
+training data. It is the starter baseline (nearest player to the ball), changed in five ways:
 
 1. **(a) Dead ball before restarts.** Smart Tagging set pieces, located exactly with the
    tracking.
@@ -15,9 +15,13 @@ training data. It is the starter baseline (nearest player to the ball), changed 
    control by the other team, and the boundary is dated back to the first touch.
 3. **(c) Missing-ball handling.** Long ball gaps are treated as stoppages unless the players move
    at live-play tempo.
+4. **(d) Second-half kick-off.** Dead ball up to the kick-off published in `games.py`.
+5. **(e) More dead-ball evidence.** The ball is dead from leaving the pitch until play
+   restarts. The stoppage covers each set-piece window up to the strike. After a goal it is
+   dead until the kick-off.
 
 Every parameter is a football quantity with a stated reason (§4.4). None was tuned on the
-public ground truth. Over the full match the model reports 254 possessions of 14.4 s mean,
+public ground truth. Over the full match the model reports 257 possessions of 13.9 s mean,
 against the baseline's 594 flickering spells of 7.2 s.
 
 ## 1. Approach, and why
@@ -36,7 +40,7 @@ separate them instead:
 
 **Dead ball matters for possessions, not just for the D class.** A missed stoppage between two
 spells of the same team merges two real possessions into one, and both are lost. In top-flight
-football the ball is out of play for roughly 35–45% of the time; our model puts 41% of graded
+football the ball is out of play for roughly 35–45% of the time; our model puts 43% of graded
 frames dead.
 
 **Why rules and not a learned model.** No labels on this match may be used. The public five
@@ -59,17 +63,21 @@ truth; `analysis/data_stats.py`):
 
   71.5% of the restart stoppages found by (a) lie inside long gaps. In 80% of long gaps the ball
   is struck (> 4 m/s) within 1 s of reappearing.
-- **Set-piece tags.** They are 35 s windows (5 s for kick-offs) that open about 5 s before the
-  strike. A tag marks the restart and the play after it, not the stoppage before it.
+- **Set-piece tags.** They are 35 s windows (5 s for kick-offs). The strike comes a median
+  6 s into the window (p10 2.8 s, p90 10.8 s). A tag marks the restart and the play after it,
+  not the stoppage before it.
+- **Goal tags.** The 4 `GOALS` tags last 94–233 s and end at the kick-off. They span the
+  scoring attack and the celebration, so a tag's start is not the goal.
 
 ## 2. Assets: used and dropped
 
 | asset | use |
 |---|---|
 | Tactical ATD (players, ball, per-slot speed, slot → team from the metadata) | **Used.** The only source of geometry. Positions are converted to metres on the 105.3 × 68.0 m pitch from `games.py`. |
-| Tactical Smart Tagging, `SET PIECES` (59 tags) | **Used** for restarts. Each tag's type sets the maximum stoppage length (§4.1). |
+| Tactical Smart Tagging, `SET PIECES` (59 tags) | **Used** for restarts. Each tag's type sets the maximum stoppage length, and its window sets a minimum stoppage (§4.1). |
+| Tactical Smart Tagging, `GOALS` (4 tags) | **Used** to bound the dead ball after a goal (§4.1). On this match the rule adds nothing, because the ball is never seen in the goal mouth. |
 | Smart Tagging phase codes (Build Up, Progression, …) and `Team` tags | **Dropped.** Phases are not possessions (DATA.md), every throw-in is `Team = N/A`, and there was no time to validate them as a soft prior. Listed under future work. |
-| `games.py` half boundaries | **Used** to write `X` outside the two halves. These are published boundaries, not labels. |
+| `games.py` half boundaries and second-half kick-off anchor | **Used** to write `X` outside the two halves, and `D` before the second-half kick-off (FAQ.md: those 2,934 graded frames are all `D`). Both are published by the organisers. Neither is a label, and we wrote no frame numbers ourselves. |
 | Tactical homography and video | **Not used by the algorithm.** We work in pitch coordinates. They are useful only for looking at errors. |
 | Broadcast video, ATD, homography | **Dropped.** They are not synchronised to the tactical timeline, no mapping is provided, and 34% of frames have no homography. Aligning them was not worth it in the time available. |
 | Public 5-minute ground truth | **Pipeline check only:** reproducing the published baseline scores, plus one sanity score per idea. Never training or tuning. |
@@ -108,26 +116,49 @@ truth; `analysis/data_stats.py`):
 
 ### 4.1 Ball alive or dead
 
-The ball is **dead (`D`)** in four cases:
+The ball is **dead (`D`)** in six cases:
 
 1. **Before every tagged restart.**
    - **Strike.** The restart is the first frame in the tag window where the ball moves faster
      than 4 m/s after at least 1 s without such motion. If the strike is never seen (2 of 59
      tags), we use 3.5 s into the tag.
-   - **Stoppage.** At least 2 s of D before the strike. We then walk backwards while there is
-     dead-ball evidence: field at walking pace (< 1.2 m/s, trailing 2 s), ball beyond the lines,
-     or ball stationary (< 1 m/s). Gaps of up to 1 s without evidence are tolerated.
+   - **Stoppage.** At least 2 s of D before the strike, and at least the tag window up to the
+     strike. The window opens a few seconds before the restart, while the ball is being placed
+     or the taker set (Laws 8, 13, 15–17). The window floor never reaches back past a strike
+     of the ball inside the pitch, because that is live play before a quick restart.
+   - **Walk back.** From there we walk backwards while there is dead-ball evidence: field at
+     walking pace (< 1.2 m/s, trailing 2 s), ball beyond the lines, or ball stationary
+     (< 1 m/s). Gaps of up to 1 s without evidence are tolerated.
    - **Stop.** The walk ends at the last live strike of the ball inside the pitch, or at a cap
      per restart type: throw-in 20 s, goal kick 30 s, corner 40 s, free kick 60 s, kick-off
      after a goal 120 s.
 
    Resulting median stoppages: corner 15 s, free kick 23 s, kick-off after goal 40 s,
-   throw-in 5 s, goal kick 2.8 s.
-2. **Before each half's kick-off**, from the first graded frame to the strike. This is found from
-   the `Kick Off (Start)` tag and the tracking, with no frame constant. It covers the ~2 minutes
-   of graded dead ball before the second-half kick-off.
-3. **Inside long ball gaps** without live-play tempo (§3).
-4. **From the moment the ball is seen beyond the lines** when it then vanishes (Law 9).
+   throw-in 7.5 s, goal kick 5.2 s.
+2. **Before each half's kick-off**, from the first graded frame to the strike.
+   - **First half.** It is graded from its kick-off (FAQ.md), found from the
+     `Kick Off (Start)` tag and the tracking.
+   - **Second half.** It is graded about 2 minutes before its kick-off. The kick-off is the
+     `kickoff_2nd` anchor in `games.py` ("the ball is struck on this frame"), so the anchor
+     frame is the last `D` and play is live from the next frame. FAQ.md: all 2,934 graded
+     frames before it are `D`. The tracking never sees this strike, and the tag-based estimate
+     would have ended the dead stretch 5 frames late.
+3. **From the ball leaving the pitch until play restarts** (Law 9). The ball must be seen
+   beyond a touch or goal line (1 m margin) for ≥ 0.5 s. A lofted ball's ground projection or
+   a tracking jump overshoots a line only for a few tenths of a second.
+   - **Stretch.** D runs to the next strike of the ball inside the pitch, which is the throw-in,
+     goal kick or corner (Laws 15–17). Frames with the ball missing in between stay dead.
+   - **Cap.** At most 40 s, the longest of those restarts' caps.
+   - **Exception.** A run while the whole field moves at live-play tempo (≥ 2 m/s) is not
+     trusted: play is going on, so the "ball" outside is a spare ball or a tracking error.
+   - **Over the match**, 46 of 79 runs beyond the lines qualify.
+4. **After a goal until the kick-off** (Laws 8, 10). The goal is the first sighting of the
+   ball over a goal line between the posts (7.32 m plus 1 m margin) inside a `GOALS` tag,
+   after any other restart tagged in it. From there to the kick-off strike is D. On this match
+   the ball is never seen in the goal mouth (the net occludes it), so this rule adds nothing.
+   The post-goal stoppages are already 83–91% D from cases 1 and 5.
+5. **Inside long ball gaps** without live-play tempo (§3).
+6. **From the moment the ball is seen beyond the lines** when it then vanishes (Law 9).
 
 We assign no owner to a dead ball. The task asks for `D` there.
 
@@ -157,9 +188,9 @@ from its first frame. This also handles throw-ins, whose tag carries no team: th
 decides.
 
 A live segment where no team is ever confirmed takes the majority of the nearest-player answers.
-There are 35 such segments out of 148: median 3.4 s long, 24 of them shorter than 5 s, 166 s in
-total. In 14 of them the ball is never seen at all, and those get `X`. Outside the two halves we
-always write `X`. Overall, `X` is on 0.89% of graded frames.
+There are 36 such segments out of 150: median 2.8 s long, 25 of them shorter than 5 s, 155 s in
+total. In 12 of them the ball is never seen at all, and those get `X`. Outside the two halves we
+always write `X`. Overall, `X` is on 0.76% of graded frames.
 
 ### 4.4 Parameters
 
@@ -178,6 +209,10 @@ always write `X`. Overall, `X` is on 0.89% of graded frames.
 | carry short gap | 3 s | a 50–60 m diagonal is in the air for about 3 s |
 | out margin | 1 m | Law 9: the whole ball must cross the line; slack for tracking error |
 | caps per restart | 20 / 30 / 40 / 60 / 120 s | typical top-flight times from ball dead to restart (§4.1) |
+| ball out, minimum | 0.5 s | lofted-ball projections and tracking jumps overshoot a line for a few tenths of a second; a ball that has gone out stays out |
+| ball out, cap | 40 s | the longest restart after the ball leaves the pitch (corner) |
+| goal mouth | 7.32 m (+ 1 m) | Law 1 goal width; Law 10: a goal is the ball over the line between the posts |
+| second-half kick-off | `games.py` anchor | published by the organisers; FAQ.md: every graded frame before it is `D` |
 | ball-speed lag, jump limit | 0.2 s, 40 m/s | jitter suppression; above the hardest shot |
 | strike fallback | 3.5 s into tag | the starter notebook shows kick-off tags opening ~3.5 s early |
 
@@ -191,28 +226,44 @@ pipeline reproduces the published baseline scores, and for one sanity score per 
 
 ## 6. Results (public five minutes: a sanity check, not model selection)
 
-| model | macroF1 | spellF1 | possessions, public (truth 17) | possessions, full match |
-|---|---|---|---|---|
-| baseline (`--steps ""`, = `baseline_smooth50`) | 0.6207 | 0.3256 | 26 | 594 (7.2 s) |
-| + (a) restarts | 0.6519 | 0.3545 | 27 | 568 (6.9 s) |
-| + (b) hysteresis | 0.6818 | 0.4824 | 17 | 259 (15.2 s) |
-| **+ (c) missing ball: submission** | **0.7277** | **0.4941** | 17 | 254 (14.4 s) |
+| model | macroF1 | spellF1 | possessions, public (truth 17) | possessions, full match | dead share, full match |
+|---|---|---|---|---|---|
+| baseline (`--steps ""`, = `baseline_smooth50`) | 0.6207 | 0.3256 | 26 | 594 (7.2 s) | |
+| + (a) restarts | 0.6519 | 0.3545 | 27 | 568 (6.9 s) | |
+| + (b) hysteresis | 0.6818 | 0.4824 | 17 | 259 (15.2 s) | |
+| + (c) missing ball | 0.7277 | 0.4941 | 17 | 254 (14.4 s) | 41.4% |
+| + (d) second-half kick-off | 0.7277 | 0.4941 | 17 | 254 (14.4 s) | 41.4% |
+| **+ (e) more dead-ball evidence: submission** | **0.7277** | **0.4941** | 17 | 257 (13.9 s) | 43.0% |
+
+Per-class F1 on the public window, for (c), (d) and (e) alike: H 0.8587, A 0.8227, D 0.5016.
 
 A 1000-draw bootstrap gives a widest spellF1 interval of **~0.33** on this window. None of these
 gaps is significant here. The case for each step rests on its football logic and on the
-full-match possession structure becoming realistic. Each idea was scored once after it was
-written. (a) was scored twice, and the change between versions was decided from the input-data
-counts in §2, not from the score.
+full-match possession structure becoming realistic.
+
+Each idea was scored once after it was written, except (a), which was scored twice. The change
+between (a)'s versions was decided from the input-data counts in §2, not from the score. A step
+was kept only if public spellF1 did not drop and the possession count stayed close to 17.
+
+(d) and (e) change 5 and 2,536 graded frames respectively, **none of them inside the public
+window**. That window is the first five minutes of the first half, and it has no ball-out run
+of ≥ 0.5 s and no set-piece window that adds frames. Their identical public scores therefore
+say nothing either way. Those steps rest on the rules of the game, the published kick-off and
+the more realistic stoppage lengths.
 
 ## 7. Limitations, and what we would do with more time
 
-- **Short goal-kick and throw-in stoppages** (median 2.8 s and 5 s, against 15–30 s and
-  10–20 s in real football). The backward search probably stops at the ball being played back
-  to the taker, or the strike detector fires on the ball going out. A per-type "ball comes to
-  rest" anchor would fix this.
-- **Untagged stoppages with the ball visible are missed:** free kicks, fouls, injuries,
-  substitutions. The tagging lists only 5 free kicks and 26 throw-ins. A generic detector would
-  look for the field at walking pace and a stationary ball for ≥ 2 s.
+- **Goal-kick and throw-in stoppages are still short** (median 5.2 s and 7.5 s, against
+  15–30 s and 10–20 s in real football). Step (e) lengthened them from 2.8 s and 5 s. The
+  backward search probably still stops at the ball being played back to the taker. A per-type
+  "ball comes to rest" anchor would fix this.
+- **Untagged stoppages with the ball in play position are missed:** free kicks, fouls, injuries,
+  substitutions. The tagging lists only 5 free kicks. Step (e) catches untagged throw-ins and
+  goal kicks when the ball is seen leaving the pitch, but nothing marks a foul. A generic
+  detector would look for the field at walking pace and a stationary ball for ≥ 2 s.
+- **The goal rule is untested here.** The ball is never seen in the goal mouth on this match,
+  so step (e)'s goal case has no effect. A goal seen only as "ball vanishes near the goal" is
+  not used.
 - **Control evidence exists on only 27% of graded frames.** Long live stretches without a
   visible ball rely on carrying. Team shape could fill in: which side is pushing up, and how
   compact the defending block is.
@@ -222,10 +273,18 @@ counts in §2, not from the score.
   with no confirmed possessor, and as evidence in the hysteresis.
 - **Timing bias not investigated.** On the public window, changes land about 0.5 s early on
   average. Correcting it on 17 possessions would be tuning.
-- **No validation beyond five minutes.** With more time we would label or source possession
-  data on *other* matches (for example Metrica's open sample games), check every threshold's
-  sensitivity there, and replace the hand-written hysteresis with a hidden Markov model whose
-  transition costs are fitted on those games.
+- **No validation beyond five minutes.** The public window cannot test steps (d) and (e) at
+  all (§6). With more time we would source possession labels on *other* matches and check
+  every threshold's sensitivity there.
+- **A learned model trained on external labelled matches, plus Viterbi decoding.** Train a
+  per-frame classifier (H / A / D) on matches with possession labels, never this one: for
+  example SkillCorner open data, or Metrica's open sample games. Its features would be the
+  same physical signals used here: nearest-player distances per team, ball speed, field tempo,
+  ball beyond the lines, and Smart Tagging context. Then decode the whole match with Viterbi
+  over an H / A / D hidden Markov model, whose transition costs are fitted on those games.
+  That would replace the hand-written hysteresis and dead-ball rules with one consistent
+  decision. Spell structure (no flicker, sharp boundaries) would come from the transition
+  penalties rather than from fixed confirm times.
 
 ## 8. Reproduction
 
@@ -250,7 +309,7 @@ python evaluation/validate_submission.py evaluation/results/UvAStudents.csv
 python selftest.py                  # 14 checks; exit code 0 = no failures
 ```
 
-The expected SHA-256 is `56ded60ba2daef692949575dc7dfa4be4aa8f5b9ed2302eee7f02c4a3e8cd0fa`.
+The expected SHA-256 is `150bad7eee44dd9854745fe38891e54e3a23206af0c9e3e9cc7ea07ea8c67c59`.
 
 The run is deterministic:
 
@@ -259,9 +318,11 @@ The run is deterministic:
 - Dependencies are pinned, transitive ones included.
 - Two runs from scratch give the same hash.
 
-`python my_model.py --steps "" --name base` writes the baseline row of §6; `--steps a` and
-`--steps ab` write the next two. `selftest.py` checks reproduction, validity, invariants and
-repository hygiene.
+`python my_model.py --steps "" --name base` writes the baseline row of §6; `--steps a`, `ab`,
+`abc` and `abcd` write the next rows. `--steps abc` reproduces the previous submission
+exactly; its SHA-256 is `56ded60b…cd0fa`. `python analysis/compare.py abcd abcde` scores two
+step sets side by side, printing only the scoreboard numbers and per-class F1. `selftest.py`
+checks reproduction, validity, invariants and repository hygiene.
 
 ## 9. Data handling and development process
 
