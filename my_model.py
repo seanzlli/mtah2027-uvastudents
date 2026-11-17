@@ -31,7 +31,7 @@ import baseline  # noqa: E402  (starter/baseline.py: team table and CSV writer)
 TEAM_NAME = "UvAStudents"
 RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
 # The submitted model: every step that passed its sanity check (NOTES.md). Letters as in predict().
-DEFAULT_STEPS = "abcd"
+DEFAULT_STEPS = "abcde"
 
 FPS = GAMES[GAME]["fps"]
 PITCH_LENGTH, PITCH_WIDTH = GAMES[GAME]["pitch"]
@@ -118,7 +118,24 @@ PARAMS = {
     # field average with the ball in play -- for at least 2 s; there possession is carried.
     "live_tempo_speed": 2.0,
     "min_live_in_gap": 50,
+
+    # ---- step (e): more dead-ball evidence ---------------------------------------------------
+    # Ball seen beyond the lines (out_margin above) for at least 0.5 s: it has left the pitch and
+    # stays dead until play restarts (Law 9) -- the next strike of the ball inside the pitch --
+    # or at most as long as the longest restart that follows the ball going out (corner, 40 s,
+    # from restart_cap_s). 0.5 s because a lofted ball's ground projection or a tracking jump
+    # overshoots a line for a few tenths of a second, while a ball that has really gone out
+    # stays out: rolling away, being fetched, held for the throw. A run while the whole field
+    # moves at live-play tempo (live_tempo_speed, as in step c) is not trusted: play is going
+    # on, so the "ball" outside is a spare ball by the touchline or a tracking error.
+    "out_min_frames": 13,
+    # Law 1: 7.32 m between the posts. A goal is the ball over the goal line between them
+    # (Law 10); out_margin is added for tracking error, as for the other lines.
+    "goal_width": 7.32,
 }
+
+# Restarts that follow the ball leaving the pitch (Laws 15-17); their caps bound step (e).
+OUT_OF_PLAY_RESTARTS = ("throw-in", "goal kick", "corner kick")
 
 
 # --------------------------------------------------------------------------------------------
@@ -289,7 +306,7 @@ def stoppage_signals(track, params=PARAMS):
     return slow | out | stationary, struck, speed
 
 
-def restart_dead_mask(track, params=PARAMS, kickoff_2nd=None):
+def restart_dead_mask(track, params=PARAMS, kickoff_2nd=None, tag_floor=False):
     """D before every tagged restart, from when the ball went dead up to the strike.
 
     Every tag is trusted to mark a real restart, so it gets at least min_dead of D. From there
@@ -300,6 +317,12 @@ def restart_dead_mask(track, params=PARAMS, kickoff_2nd=None):
     kickoff_2nd -- (first graded frame, first live frame) of the second half from games.py
     (step d). When given, the published kick-off replaces the tracking's estimate for the
     second-half kick-off tag.
+
+    tag_floor -- step (e): the stoppage covers at least the tag window up to the strike. Smart
+    Tagging opens a set-piece window a few seconds before the restart (input data: strike a
+    median 6 s into the window), when the ball is being placed and the taker set (Laws 8, 13,
+    15-17). Only live play could precede a quick restart in that stretch, and live play shows
+    as the ball struck inside the pitch, so the floor never reaches back past such a strike.
     """
     n = track["n_frames"]
     evidence, struck, speed = stoppage_signals(track, params)
@@ -337,6 +360,13 @@ def restart_dead_mask(track, params=PARAMS, kickoff_2nd=None):
                     break
             t -= 1
         dead_start = max(earliest, min(dead_start, r - params["min_dead"]))
+        if tag_floor and start < r:
+            live = np.flatnonzero(struck[start:r])
+            floor = start + int(live[-1]) + 1 if len(live) else start
+            if floor < dead_start:
+                stats["floor_frames"] = stats.get("floor_frames", 0) + dead_start - max(
+                    earliest, floor)
+            dead_start = max(earliest, min(dead_start, floor))
         mask[dead_start:r] = True
         stats["used"] += 1
         lengths.setdefault(kind, []).append((r - dead_start) / float(FPS))
@@ -360,6 +390,86 @@ def second_half_kickoff():
     first = next(first for half, first, _ in half_video_blocks(GAME) if half == 2)
     live_from = anchor_video_frame(GAMES[GAME]["kickoff_2nd"]) + 1
     return first, live_from
+
+
+# --------------------------------------------------------------------------------------------
+# Step (e): more dead-ball evidence (the set-piece window floor is in restart_dead_mask)
+# --------------------------------------------------------------------------------------------
+
+def out_of_play_dead_mask(track, params=PARAMS):
+    """D from the ball being seen beyond the lines until play restarts.
+
+    Law 9: once the whole ball has crossed a touch or goal line it is out of play, and it stays
+    out until a throw-in, goal kick or corner (Laws 15-17) -- seen here as the next strike of
+    the ball inside the pitch. Frames in between with the ball missing stay dead.
+    """
+    n = track["n_frames"]
+    _, struck, _ = stoppage_signals(track, params)
+    out = ball_out_of_play_position(track, params)
+    tempo = np.nan_to_num(field_speed(track, params, centred=True), nan=0.0)
+    cap = int(FPS * max(params["restart_cap_s"][k] for k in OUT_OF_PLAY_RESTARTS))
+    mask = np.zeros(n, dtype=bool)
+    stats = {"runs": 0, "brief": 0, "live_tempo": 0, "used": 0, "no_restart": 0}
+    for lo, hi in runs_of(out):
+        stats["runs"] += 1
+        if hi - lo < params["out_min_frames"]:
+            stats["brief"] += 1
+            continue
+        if np.median(tempo[lo:hi]) >= params["live_tempo_speed"]:
+            stats["live_tempo"] += 1
+            continue
+        limit = min(n, max(hi, lo + cap))
+        restart = np.flatnonzero(struck[hi:limit])
+        end = hi + int(restart[0]) if len(restart) else limit
+        stats["no_restart"] += int(len(restart) == 0)
+        mask[lo:end] = True
+        stats["used"] += 1
+    return mask, stats
+
+
+def load_goals():
+    """Smart Tagging GOALS intervals as (start_frame, end_frame)."""
+    import load_smart_tagging
+    return [(event["start_frame"], event["end_frame"]) for event in load_smart_tagging.load()
+            if (event["code"] or "").strip().lower() == "goals"]
+
+
+def goal_dead_mask(track, params=PARAMS):
+    """After a goal the ball is dead until the kick-off (Laws 8 and 10).
+
+    A GOALS tag spans the attack that produced the goal and the celebration, and ends at the
+    kick-off (input data), so its start is not the goal. The goal is the first sighting of the
+    ball over a goal line between the posts inside the tag, after the strike of any other
+    restart tagged inside it (a corner that led to the goal, say). From there to the kick-off
+    strike is D. If the ball is never seen in the goal, the tag adds nothing and step (a) still
+    covers the stoppage before the kick-off.
+    """
+    n = track["n_frames"]
+    speed = ball_speed(track, params)
+    x, y, m = track["ball"][:, 0], track["ball"][:, 1], params["out_margin"]
+    with np.errstate(invalid="ignore"):
+        in_goal = (((x < -m) | (x > PITCH_LENGTH + m))
+                   & (np.abs(y - PITCH_WIDTH / 2.0) <= params["goal_width"] / 2.0 + m))
+    restarts = [(kind, restart_frame(speed, s, e, params)[0]) for kind, s, e in load_restarts()]
+    reach = int(FPS * params["restart_cap_s"]["kick off (after goal)"])
+    mask = np.zeros(n, dtype=bool)
+    stats = {"goals": 0, "seen": 0}
+    for start, end in load_goals():
+        stats["goals"] += 1
+        kickoffs = [r for kind, r in restarts
+                    if kind == "kick off (after goal)" and start <= r <= end + reach]
+        if not kickoffs:
+            continue
+        kickoff = min(kickoffs)
+        others = [r + 1 for kind, r in restarts
+                  if start <= r < kickoff and not kind.startswith("kick off")]
+        search_from = max([start] + others)
+        hits = np.flatnonzero(in_goal[search_from:kickoff])
+        if len(hits) == 0:
+            continue
+        mask[search_from + int(hits[0]):kickoff] = True
+        stats["seen"] += 1
+    return mask, stats
 
 
 # --------------------------------------------------------------------------------------------
@@ -501,6 +611,7 @@ def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
 
         a  dead ball before Smart Tagging restarts     b  hysteresis possession switching
         c  missing-ball handling                       d  second-half kick-off from games.py
+        e  more dead-ball evidence: ball out of play, set-piece windows, goals
     """
     n = track["n_frames"]
     graded = graded_mask(n)
@@ -515,9 +626,11 @@ def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
     else:
         dead = ~seen_within(nearest, params["baseline_window"])
     if "a" in steps:
-        restart_dead, stats = restart_dead_mask(track, params, kickoff_2nd)
+        restart_dead, stats = restart_dead_mask(track, params, kickoff_2nd, "e" in steps)
         print("(a) restarts: {tags} tags, {used} used, {fallback} without a seen strike".format(
             **stats))
+        if "e" in steps:
+            print("(e) set-piece windows add {} D frames".format(stats.get("floor_frames", 0)))
         print("    median stoppage length (s) by type: {}".format(stats["median_s"]))
         print("    D frames from restarts: {}".format(int(restart_dead.sum())))
         dead |= restart_dead
@@ -526,6 +639,15 @@ def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
         dead[first:live_from] = True
         print("(d) second half: D from its first graded frame to the published kick-off "
               "({} frames)".format(live_from - first))
+    if "e" in steps:
+        out_dead, stats = out_of_play_dead_mask(track, params)
+        print("(e) ball beyond the lines: {runs} runs, {brief} under 0.5 s, {live_tempo} at "
+              "live tempo, {used} used ({no_restart} without a restart seen)".format(**stats))
+        goal_dead, stats = goal_dead_mask(track, params)
+        print("    goals: {goals} tags, ball seen in the goal for {seen}".format(**stats))
+        new = (out_dead | goal_dead) & ~dead & graded
+        print("    D frames added by out of play / goals: {}".format(int(new.sum())))
+        dead |= out_dead | goal_dead
 
     # Who has the ball while it is alive.
     if "b" in steps:

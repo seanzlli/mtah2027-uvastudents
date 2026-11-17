@@ -216,6 +216,73 @@ window, which is in the first half.
 unchanged (spellF1 0.4941, macroF1 0.7277, 17 possessions; F1 H 0.8587, A 0.8227,
 D 0.5016). **Kept.**
 
+## Step (e): more dead-ball evidence
+
+D is the weakest class (public F1 0.50, against 0.86 / 0.82 for H / A). Step (e) adds three
+dead-ball rules.
+
+**1. Ball out of play → D until play restarts (Law 9).**
+
+- **Trigger.** The ball is seen beyond a touch or goal line, with the same 1 m margin as
+  before, for **≥ 0.5 s**.
+- **Stretch.** D from the first such frame until the next strike of the ball inside the pitch
+  (> 4 m/s, step (a)'s strike speed). That strike is the throw-in, goal kick or corner (Laws
+  15–17). Frames with the ball missing in between stay dead.
+- **Cap.** At most **40 s**, the longest cap among those three restarts (corner, from step
+  (a)'s table).
+- **Exception.** A run while the whole field moves at live-play tempo (≥ 2 m/s, step (c)'s
+  definition) is not trusted. Play is going on, so the "ball" outside is a spare ball by the
+  touchline or a tracking error.
+
+**2. Set-piece window → D before the strike.** Smart Tagging opens each `SET PIECES` window
+a few seconds before the restart (input data: strike a median 6 s into the window, p10 2.8 s,
+p90 10.8 s). In those seconds the ball is being placed or the taker set (Laws 8, 13, 15–17).
+
+- **Floor.** Step (a)'s stoppage now covers at least the window up to the strike.
+- **Guard.** The floor never reaches back past a strike of the ball inside the pitch, the
+  only sign that a quick restart was preceded by live play.
+
+**3. Goal → D until the kick-off (Laws 8, 10).** Input data:
+
+- A `GOALS` tag lasts 94–233 s and ends at the kick-off.
+- The ball is first seen beyond a goal line 12–30 s after the tag starts.
+
+So the tag spans the scoring attack plus the celebration, and its start is not the goal. The
+rule:
+
+- **The goal moment** is the first sighting of the ball over a goal line **between the posts**
+  (7.32 m, Law 1, plus the 1 m margin) inside the tag. Sightings before the strike of any
+  other restart tagged inside it are ignored (a corner that led to the goal, for example).
+- **The stretch.** From the goal moment to the kick-off strike is D.
+
+| parameter | value | reason |
+|---|---|---|
+| out-of-play minimum | 0.5 s | a lofted ball's ground projection or a tracking jump overshoots a line for a few tenths of a second; a ball that has really gone out stays out (rolling away, being fetched, held for the throw) |
+| out-of-play cap | 40 s | longest restart after the ball leaves the pitch (corner; step (a)'s caps) |
+| live-tempo exception | 2 m/s | step (c)'s live-play tempo, reused |
+| goal mouth | 7.32 m + 1 m | Law 1 goal width; Law 10 goal; the usual line margin |
+
+**What it does on the full match** (input data, no ground truth):
+
+- **Ball beyond the lines.** 79 runs. 26 are shorter than 0.5 s and 7 are at live tempo, so
+  46 are used; 3 of those have no restart seen within the cap.
+- **Set-piece windows.** They add 2,130 D frames. Median stoppages become: throw-in
+  5.2 → 7.5 s, goal kick 2.8 → 5.2 s. That is closer to real football, which was the known
+  limitation of step (a).
+- **Out of play and goals together** add 2,048 D frames.
+- **The goal rule adds nothing on this match.** The ball is never seen between the posts in
+  any of the 4 `GOALS` tags (the net occludes it). The post-goal stoppages were already
+  83–91% D from steps (a) and (c), and the rest of each tag is mostly the scoring attack,
+  which is live.
+- **Totals.** Possessions 254 → 257 (mean 13.9 s). Dead-ball share 41.4% → 43.0%.
+
+**Sanity check.** 2,536 graded frames change, **none inside the public window**: the first
+five minutes have no ball-out run of ≥ 0.5 s and no set-piece window that adds frames. The
+public scores are therefore identical (spellF1 0.4941, macroF1 0.7277, 17 possessions;
+F1 H 0.8587, A 0.8227, D 0.5016). That meets the keep rule: spellF1 does not drop and the
+count stays at 17. But it also means the public window cannot test this step. The case for it
+is the football reasoning plus the more realistic stoppage lengths. **Kept.**
+
 ## Sanity-check scores (public 5 min — pipeline check, not model selection)
 
 Each idea was scored once after it was written. (a) was scored twice; see its revision note.
