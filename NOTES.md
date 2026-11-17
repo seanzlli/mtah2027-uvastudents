@@ -34,9 +34,11 @@ check proves the CSV you upload is exactly what the current code produces.
 - **No match data leaves the machine.** Scripts print summary counts only. `data/`, every CSV
   (submissions, the public ground truth) and `evaluation/reports/` (which lists ground-truth
   transition frames) are never opened by hand or pasted anywhere.
-- **Labels come from an algorithm.** There are no hand labels and no frame numbers or constants
-  tied to this match. The half boundaries come from `games.half_video_blocks`, which the
-  organisers publish; kick-offs are found from the Smart Tagging plus the tracking.
+- **Labels come from an algorithm.** There are no hand labels, and we wrote no frame numbers or
+  constants tied to this match. Match facts come only from what the organisers publish in
+  `games.py`: the half boundaries (`half_video_blocks`) and, from step (d) on, the second-half
+  kick-off anchor (`kickoff_2nd`). The other kick-offs and all restarts are found from the Smart
+  Tagging plus the tracking.
 - **Parameters come from football reasoning**, written down next to each value in `PARAMS`
   (`my_model.py`) and summarised below. The public 5 minutes (17 possessions) are scored once
   per idea as a pipeline sanity check. Nothing is swept against them. Where an idea was revised,
@@ -187,6 +189,33 @@ minimum stoppage from step (a), reused as the minimum live stretch.
 **Effect on the full match:** inside long gaps 3,183 s are D and 242 s are carried as live.
 Possessions 259 → 254, mean 14.4 s.
 
+## Step (d): the second-half kick-off from `games.py`
+
+**Source.** FAQ.md: "the second half is graded from frame 110,808 but does not kick off until
+**113,742**. Those 2,934 frames are graded and all of them are `D`."
+
+**What it does.** Everything from the first graded frame of half 2 up to the kick-off is D.
+Both frames are derived from `games.py`, not written in our code:
+
+- the start comes from `half_video_blocks`;
+- the kick-off comes from the `kickoff_2nd` anchor via `anchor_video_frame`.
+
+The anchor is "the ball is struck on this frame", so the strike frame is the last dead frame
+and play is live from the next one. That matches the FAQ's count of 2,934 D frames, and the
+starter loader's `KICKOFF_VIDEO_FRAMES`. The published kick-off also replaces step (a)'s
+tracking estimate for that tag. The first half needs nothing, because it is graded from its
+kick-off (FAQ.md).
+
+**Why it was needed (input data).** Step (a) already made all 2,934 pre-kick-off frames D. But
+the tracking never sees the second-half kick-off strike, so (a) fell back to "3.5 s into the
+tag", and that ended the dead stretch 5 frames *after* the real kick-off. Step (d) makes those
+5 frames live. It is a correctness fix, not a score lever, and it cannot touch the public
+window, which is in the first half.
+
+**Sanity check:** 5 graded frames change, none inside the public window. Public scores are
+unchanged (spellF1 0.4941, macroF1 0.7277, 17 possessions; F1 H 0.8587, A 0.8227,
+D 0.5016). **Kept.**
+
 ## Sanity-check scores (public 5 min — pipeline check, not model selection)
 
 Each idea was scored once after it was written. (a) was scored twice; see its revision note.
@@ -244,5 +273,8 @@ realistic, not on these numbers.
 - `selftest.py`: one-command correctness checks (see the top of this file).
 - `check.sh`: validator + scoreboard only.
 - `analysis/data_stats.py`: the input-data aggregates quoted above.
+- `analysis/compare.py OLD NEW`: scores two step sets side by side on the public window.
+  It prints the scoreboard numbers and per-class F1 only, and deletes the scorer's reports
+  unread.
 - `requirements.txt`: exact pins for reproduction.
 - `evaluation/results/*.csv` (the submission included) is gitignored.

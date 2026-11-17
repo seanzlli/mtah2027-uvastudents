@@ -24,11 +24,14 @@ import numpy as np
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "starter"))
-from games import GAME, GAMES, half_video_blocks, require, source_frames  # noqa: E402
+from games import (GAME, GAMES, anchor_video_frame, half_video_blocks, require,  # noqa: E402
+                   source_frames)
 import baseline  # noqa: E402  (starter/baseline.py: team table and CSV writer)
 
 TEAM_NAME = "UvAStudents"
 RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
+# The submitted model: every step that passed its sanity check (NOTES.md). Letters as in predict().
+DEFAULT_STEPS = "abcd"
 
 FPS = GAMES[GAME]["fps"]
 PITCH_LENGTH, PITCH_WIDTH = GAMES[GAME]["pitch"]
@@ -286,13 +289,17 @@ def stoppage_signals(track, params=PARAMS):
     return slow | out | stationary, struck, speed
 
 
-def restart_dead_mask(track, params=PARAMS):
+def restart_dead_mask(track, params=PARAMS, kickoff_2nd=None):
     """D before every tagged restart, from when the ball went dead up to the strike.
 
     Every tag is trusted to mark a real restart, so it gets at least min_dead of D. From there
     the stoppage is extended backwards while there is evidence of a dead ball (see
     stoppage_signals), tolerating short evidence gaps, and stopping at the last live strike of
     the ball inside the pitch or at the cap for that restart type.
+
+    kickoff_2nd -- (first graded frame, first live frame) of the second half from games.py
+    (step d). When given, the published kick-off replaces the tracking's estimate for the
+    second-half kick-off tag.
     """
     n = track["n_frames"]
     evidence, struck, speed = stoppage_signals(track, params)
@@ -312,6 +319,8 @@ def restart_dead_mask(track, params=PARAMS):
         cap = params["restart_cap_s"][kind]
         if cap is None:  # match kick-off: dead from the start of the half
             half_start = next((first for _, first, last in blocks if r <= last), None)
+            if kickoff_2nd is not None and half_start == kickoff_2nd[0]:
+                r = kickoff_2nd[1]
             if half_start is not None and half_start < r:
                 mask[half_start:r] = True
             stats["used"] += 1
@@ -333,6 +342,24 @@ def restart_dead_mask(track, params=PARAMS):
         lengths.setdefault(kind, []).append((r - dead_start) / float(FPS))
     stats["median_s"] = {k: round(float(np.median(v)), 1) for k, v in sorted(lengths.items())}
     return mask, stats
+
+
+# --------------------------------------------------------------------------------------------
+# Step (d): the second-half kick-off from games.py
+# --------------------------------------------------------------------------------------------
+
+def second_half_kickoff():
+    """(first graded frame, first live frame) of the second half, both from games.py.
+
+    FAQ.md: the second half is graded from its first tracked frame but kicks off ~2 minutes
+    later, and every graded frame before the kick-off is D. games.py publishes the kick-off as
+    an anchor -- "the ball is struck on this frame" (kickoff_2nd) -- and the graded span as
+    half_video_blocks(). The strike frame is the last dead frame; play is live from the next.
+    The first half needs nothing: it is graded from its kick-off (FAQ.md).
+    """
+    first = next(first for half, first, _ in half_video_blocks(GAME) if half == 2)
+    live_from = anchor_video_frame(GAMES[GAME]["kickoff_2nd"]) + 1
+    return first, live_from
 
 
 # --------------------------------------------------------------------------------------------
@@ -468,12 +495,17 @@ def graded_mask(n_frames):
     return mask
 
 
-def predict(track, params=PARAMS, steps="abc"):
+def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
     """Per-frame labels H/A/D/X for the whole video. `steps` switches improvements on, so each
-    one can be scored on its own (ablation for the technical document)."""
+    one can be scored on its own (ablation for the technical document):
+
+        a  dead ball before Smart Tagging restarts     b  hysteresis possession switching
+        c  missing-ball handling                       d  second-half kick-off from games.py
+    """
     n = track["n_frames"]
     graded = graded_mask(n)
     d_home, d_away, nearest = ball_distances(track)
+    kickoff_2nd = second_half_kickoff() if "d" in steps else None
 
     # Dead ball from the missing ball: step (c), or the baseline's rule (no ball within +/- 2 s).
     if "c" in steps:
@@ -483,12 +515,17 @@ def predict(track, params=PARAMS, steps="abc"):
     else:
         dead = ~seen_within(nearest, params["baseline_window"])
     if "a" in steps:
-        restart_dead, stats = restart_dead_mask(track, params)
+        restart_dead, stats = restart_dead_mask(track, params, kickoff_2nd)
         print("(a) restarts: {tags} tags, {used} used, {fallback} without a seen strike".format(
             **stats))
         print("    median stoppage length (s) by type: {}".format(stats["median_s"]))
         print("    D frames from restarts: {}".format(int(restart_dead.sum())))
         dead |= restart_dead
+    if kickoff_2nd is not None:
+        first, live_from = kickoff_2nd
+        dead[first:live_from] = True
+        print("(d) second half: D from its first graded frame to the published kick-off "
+              "({} frames)".format(live_from - first))
 
     # Who has the ball while it is alive.
     if "b" in steps:
@@ -509,8 +546,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", default=TEAM_NAME, help="output file stem")
     parser.add_argument("--out", default=RESULTS_DIR, help="output folder")
-    parser.add_argument("--steps", default="abc",
-                        help="improvements to apply, e.g. 'a' (default: all); '' = baseline")
+    parser.add_argument("--steps", default=DEFAULT_STEPS,
+                        help="improvements to apply, e.g. 'a' (default: {}); '' = baseline"
+                        .format(DEFAULT_STEPS))
     args = parser.parse_args()
 
     track = load_tracking()

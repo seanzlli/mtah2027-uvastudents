@@ -97,8 +97,10 @@ def check_invariants(track, labels, graded):
     report("PASS" if x_share <= MAX_GRADED_X_SHARE else "WARN", "graded abstentions",
            "{:.2%} of graded frames are X (limit {:.0%})".format(x_share, MAX_GRADED_X_SHARE))
 
-    # Before each half's kick-off strike the ball is dead (found from tags + tracking).
+    # Before each half's kick-off strike the ball is dead (found from tags + tracking; for the
+    # second half the kick-off published in games.py when step d is on).
     speed = mm.ball_speed(track)
+    kickoff_2nd = mm.second_half_kickoff() if "d" in mm.DEFAULT_STEPS else None
     not_dead, halves_checked = 0, 0
     for kind, start, end in mm.load_restarts():
         if kind != "kick off (start)":
@@ -108,6 +110,8 @@ def check_invariants(track, labels, graded):
                            if r <= last), None)
         if half_start is None:
             continue
+        if kickoff_2nd is not None and half_start == kickoff_2nd[0]:
+            r = kickoff_2nd[1]
         halves_checked += 1
         not_dead += int(np.sum(labels[half_start:r] != "D"))
     report("PASS" if halves_checked == 2 and not_dead == 0 else "FAIL", "pre-kick-off = D",
@@ -138,7 +142,7 @@ def check_plausible(labels, graded):
 def check_reproducible(labels):
     with contextlib.redirect_stdout(io.StringIO()):
         fresh = mm.load_tracking()                   # a second, independent parse
-    again = quiet_predict(fresh, "abc")
+    again = quiet_predict(fresh, mm.DEFAULT_STEPS)
     diff = int(np.sum(again != labels))
     report("PASS" if diff == 0 else "FAIL", "reproducible",
            "{} frames differ after re-parsing the raw tracking".format(diff))
@@ -240,7 +244,7 @@ def check_notebooks(indexed):
 def main():
     track = mm.load_tracking()
     graded = mm.graded_mask(track["n_frames"])
-    labels = quiet_predict(track, "abc")
+    labels = quiet_predict(track, mm.DEFAULT_STEPS)
 
     base_codes = check_baseline(track, graded)
     check_valid(labels)
