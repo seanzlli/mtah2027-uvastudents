@@ -312,6 +312,62 @@ are identical (spellF1 0.4941, macroF1 0.7277, 17 possessions; F1 H 0.8587, A 0.
 D 0.5016). spellF1 is unchanged, as the keep rule requires and as the construction
 guarantees. **Kept.**
 
+## Step (g): dead ball from a decision tree over player positions
+
+**Why.** Steps (a)–(f) have high dead-ball precision and poor recall — 0.370 on the public
+window, so we miss nearly two thirds of the dead frames, and the misses are labelled H or A,
+which costs the possession classes too. Nothing in the tagging marks a foul, an injury or a
+substitution, and only 5 free kicks are tagged in the whole match.
+
+**What it is.** A single decision tree, depth 4, 31 nodes, over 35 features computed from
+player positions **only** — speeds at 1/2/5/10 s trailing windows, team spread, compactness,
+extents. No ball: it is missing on 41% of graded frames, so a detector needing it cannot help.
+Fitted on two DFL/Sportec open Bundesliga matches that publish a per-frame `ball_status`, with
+two further DFL matches held out. No labels from this match, for anything (RULES.md).
+
+**Per-match normalisation is the part that matters.** Each feature becomes its percentile
+within the match being labelled. Without it the same detector pushed the dead share to 66% and
+spellF1 *down*; with it both metrics improve. Providers read the same football at different
+speeds.
+
+**Why one tree.** A 300-tree boosted ensemble (18,300 nodes) scored 0.874 F1 on a held-out
+match against this tree's 0.866, and once normalisation was applied the two tied outright.
+Depth 10 scored *worse* than depth 4. Capacity was never the bottleneck, so we ship the version
+that prints in full.
+
+**Parameters.** Threshold 0.30 and a 2 s minimum run (the Laws 8/13/15–17 minimum stoppage
+already used in (a)). We later re-selected the threshold on the two held-out matches by
+dead/alive F1, which peaks at 0.30 (0.875) and falls monotonically above it — and its predicted
+dead share there, 46.5%/48.7%, is within ~2 points of the true 44.3%/47.5%.
+
+**Effect.** D-recall 0.370 → 0.793, D-F1 0.502 → 0.720, and median transition latency −10 → −2
+frames: the early-boundary bias we had recorded was in the dead-ball edges, not in where we
+date the H↔A switch.
+
+**Cost.** This is the one learned component, so the repository now carries a model artifact and
+a training script. Inference is numpy walking a JSON file — the submission needs neither
+scikit-learn nor databallpy.
+
+## Step (h): dead-ball evidence with the ball unseen
+
+**Why.** Instrumenting all 57 capped backward searches in (a): **36 end on an evidence gap**,
+not on a strike. In the one-second window that broke those walks the field averaged 1.49 m/s
+and the ball was visible on only **17%** of frames. Both `out` and `stationary` need a visible
+ball, so with the ball unseen the only evidence left is `slow` (< 1.2 m/s) — and players jogging
+back into shape for a restart are above that. The search starved.
+
+**Two corrections.** An unseen ball with the field below live-play tempo (2.0 m/s, already in
+`PARAMS`) is dead-ball evidence; and a strike while the whole field walks is not live play but
+the ball being returned to the taker, which accounts for 6 of the 14 strike-terminated walks.
+
+**Effect on the rules.** Median stoppages move into their real-football ranges: corner
+15.0 → 32.3 s (real 20–40), free kick 23.2 → 34.5 s (20–60), throw-in 7.5 → 10.2 s (10–20).
+Goal kicks reach only 6.6 s against 15–30 s, so something specific to them remains.
+
+**Effect on the output: none.** With (g) present the submission is byte-identical — the tree had
+already marked every frame the corrected search reaches. Kept because the rules should be right
+independently of the tree, not because it changes the score.
+
 ## Sanity-check scores (public 5 min — pipeline check, not model selection)
 
 Each idea was scored once after it was written. (a) was scored twice; see its revision note.
@@ -324,10 +380,14 @@ Each idea was scored once after it was written. (a) was scored twice; see its re
 | + (c) missing ball (previous submission, tag `v1-fallback`) | 0.7277 | 0.4941 | 17 | 16.0 | 254 (14.4 s) |
 | + (d) second-half kick-off | 0.7277 | 0.4941 | 17 | 16.0 | 254 (14.4 s) |
 | + (e) more dead-ball evidence | 0.7277 | 0.4941 | 17 | 16.0 | 257 (13.9 s) |
-| **+ (f) no graded X = submission** | **0.7277** | **0.4941** | 17 | 16.0 | 257 (13.9 s) |
+| + (f) no graded X (tag `v2-rules`) | 0.7277 | 0.4941 | 17 | 16.0 | 257 (13.9 s) |
+| + (g) dead-ball tree | 0.8017 | 0.5161 | 14 | 16.4 | 237 (12.2 s) |
+| **+ (h) unseen-ball evidence = submission** | **0.8017** | **0.5161** | 14 | 16.4 | 237 (12.2 s) |
 
 Ground truth (public): 17 possessions of mean 14.2 s. Per-class F1 for (c) through (f):
-H 0.8587, A 0.8227, D 0.5016. Steps (d), (e) and (f) change no frame inside the public window.
+H 0.8587, A 0.8227, D 0.5016; with (g) and (h): H 0.8716, A 0.8136, D 0.7198. Steps (d), (e)
+and (f) change no frame inside the public window, and (h) changes none of the output at all
+once (g) is present.
 
 **Noise.** `run_evaluation.py --bootstrap 1000` gives a spellF1 band of **~0.33** on the public
 window (17 possessions). None of the gaps above can be called significant there. The case for
@@ -346,10 +406,14 @@ realistic, not on these numbers.
   environment the file was built in, and `pip check` reports no conflicts. A fresh virtualenv
   install from these pins has not been tried.
 - **Two runs, same file.** Deleting the output and running twice gives the same SHA-256:
-  `bff95b03f2f0d84bbce5f307384c8244454def2bfac4fb6bb43ce6ade82dc08b`. Anyone with the data
+  `a896a8d8bd5140e7306c5ce8f17be654474c145fe279d608383e442523fd0b31`. Anyone with the data
   bundle can check that this hash reproduces. Earlier submissions still reproduce exactly:
-  `--steps abcde` gives `150bad7e…c67c59`, and `--steps abc` gives `56ded60b…cd0fa`.
-- **Validator:** OK, 199,319 rows, 257 possessions of mean 13.9 s. `selftest.py`: 14 checks,
+  `--steps abcdef` gives `bff95b03…dc08b`, `--steps abcde` gives `150bad7e…c67c59`, and
+  `--steps abc` gives `56ded60b…cd0fa`.
+- **Step (g) adds no runtime dependency.** The tree ships as JSON and is walked in numpy;
+  `training/train_deadball.py` needs scikit-learn and `databallpy` but is never run to
+  reproduce the submission.
+- **Validator:** OK, 199,319 rows, 237 possessions of mean 12.2 s. `selftest.py`: 14 checks,
   0 FAIL, 0 WARN.
 
 ## Limitations / ideas not done
@@ -378,6 +442,10 @@ realistic, not on these numbers.
 ## Files
 
 - `my_model.py`: the model; `PARAMS` holds every value with its reason.
+- `deadball.py`: step (g) — ball-free features, per-match normalisation, numpy tree walk.
+- `models/deadball_tree.json`: the fitted tree, 31 nodes of plain thresholds.
+- `training/train_deadball.py`: refits the tree from DFL open data (offline; not needed to
+  reproduce the submission).
 - `selftest.py`: one-command correctness checks (see the top of this file).
 - `check.sh`: validator + scoreboard only.
 - `analysis/data_stats.py`: the input-data aggregates quoted above.
