@@ -4,8 +4,7 @@
 #   python -m venv .venv-train
 #   .venv-train/bin/pip install -r training/requirements.txt
 #
-# NOTE: the test/ virtualenv the tree was fitted in was not on the machine this file was
-# written on. These pins are the latest PyPI releases on 2026-11-17, not versions read from
-# that environment. To confirm them, run `pip show databallpy scikit-learn` in that venv.
+# These are the versions in the training venv that fitted models/deadball_tree.json,
+# confirmed from that environment on 2026-11-17.
 databallpy==0.8.1
 scikit-learn==1.9.1
