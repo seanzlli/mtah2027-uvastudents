@@ -264,21 +264,56 @@ result. No graded frame is `X`. Outside the two halves we always write `X`.
 
 **One learned component, trained on other matches. Nothing from this match.**
 
-Step (g) is a decision tree fitted on **two DFL/Sportec open Bundesliga matches**, which publish
-a per-frame `ball_status` (alive/dead). **Two further DFL matches were held out** to set the two
-parameters in §4.4 and to check the result. `RULES.md` permits labelled data from other games
-and forbids labels from the graded match: none were used, for fitting, for choosing a threshold,
-or for feature selection. The tree is committed as `models/deadball_tree.json`;
-`training/train_deadball.py` reproduces it and is the only part of the repository that needs
-scikit-learn.
+**Source.** Step (g) is fitted on the DFL/Sportec open data: M. Bassek, R. Rein, H. Weber and
+D. Memmert, "An integrated dataset of spatiotemporal and event data in elite soccer",
+*Scientific Data* (2025), <https://doi.org/10.1038/s41597-025-04505-y>. It contains official
+position and event data for seven matches from the first and second Bundesliga. The DFL
+releases it under the **Creative Commons Attribution 4.0 (CC BY 4.0)** licence, and the
+citation above is our attribution. We do not redistribute the data: `databallpy`
+(`get_open_game(provider="dfl", ...)`) downloads it from the published source.
 
-Everything else is unlearned. Steps (a)–(f) and (h) are hand-written rules whose every parameter
-is a football quantity (§4.4), taken from football knowledge and from aggregate statistics of
-the *input* data (tracking and tagging), never from the ground truth.
+**Matches.** We use four of the seven:
 
-The public five minutes were used only to confirm the pipeline reproduces the published baseline
-scores, and for one sanity score per idea. No parameter anywhere in the model was chosen by its
-score on that window.
+| role | DFL match ID |
+|---|---|
+| training | `DFL-MAT-J03WMX` |
+| training | `DFL-MAT-J03WN1` |
+| held out | `DFL-MAT-J03WPY` |
+| held out | `DFL-MAT-J03WOH` |
+
+The two held-out matches were never used for fitting. They were used to set the two parameters
+in §4.4 and to check the result. They are therefore a validation set, not an untouched test
+set.
+
+**Labels.** The only label is the per-frame `ball_status` field (alive / dead). The data
+provider publishes it with the position data. **It comes from the provider, not from us:** we
+created, edited and corrected no labels. `RULES.md` permits labelled data from other games and
+forbids labels from the graded match. None were used from the graded match, whether for fitting,
+choosing a threshold or selecting features.
+
+**Per-match normalisation, and when the public window was seen.** The first tree was fitted
+and applied on raw feature values. On this match it pushed the dead share to **66%**, which is
+implausible: the ball is out of play for roughly 35–45% of a top-flight match (§1). That figure
+is why we switched to per-match rank normalisation, in which each feature becomes its
+percentile within the match being labelled (`deadball.py`, applied identically in training).
+
+The public window was **also checked at that point**: the unnormalised tree lowered spellF1
+there (NOTES.md, step (g)). So that score was in view when the switch was decided. The
+normalised tree gives 54.7%, still above the football range, and §7 discusses it.
+
+**Artefact and software.** The tree is committed as `models/deadball_tree.json`.
+`training/train_deadball.py` reproduces it, and it is the only part of the repository that
+needs scikit-learn and `databallpy`. `training/requirements.txt` pins both. The submission
+itself needs only `requirements.txt`.
+
+Everything else is unlearned. Steps (a)–(f) and (h) are hand-written rules. Every parameter is
+a football quantity (§4.4), taken from football knowledge and from aggregate statistics of the
+*input* data (tracking and tagging), never from the ground truth.
+
+The public five minutes were used for two things: to confirm the pipeline reproduces the
+published baseline scores, and for one sanity score per idea. No parameter anywhere in the model
+was chosen by its score on that window. The one design decision taken with a public-window score
+in view is the normalisation switch above.
 
 ## 6. Results (public five minutes: a sanity check, not model selection)
 
