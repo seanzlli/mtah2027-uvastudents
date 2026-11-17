@@ -29,7 +29,7 @@ from databallpy import get_open_game                     # noqa: E402
 
 TRAIN = ["J03WMX", "J03WN1"]
 HELDOUT = ["J03WPY", "J03WOH"]
-MAX_DEPTH = 4          # 29 nodes; depth 10 scores WORSE on held-out matches (overfits)
+MAX_DEPTH = 4          # 31 nodes; depth 10 scores WORSE on held-out matches (overfits)
 MIN_LEAF = 500         # ~20 s: a leaf must describe a sustained situation, not a blip
 FPS = 25
 OUT = os.path.join(REPO, "models", "deadball_tree.json")

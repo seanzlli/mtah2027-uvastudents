@@ -380,7 +380,7 @@ Each idea was scored once after it was written. (a) was scored twice; see its re
 | + (c) missing ball (previous submission, tag `v1-fallback`) | 0.7277 | 0.4941 | 17 | 16.0 | 254 (14.4 s) |
 | + (d) second-half kick-off | 0.7277 | 0.4941 | 17 | 16.0 | 254 (14.4 s) |
 | + (e) more dead-ball evidence | 0.7277 | 0.4941 | 17 | 16.0 | 257 (13.9 s) |
-| + (f) no graded X (tag `v2-rules`) | 0.7277 | 0.4941 | 17 | 16.0 | 257 (13.9 s) |
+| + (f) no graded X (commit `f714bdc`) | 0.7277 | 0.4941 | 17 | 16.0 | 257 (13.9 s) |
 | + (g) dead-ball tree | 0.8017 | 0.5161 | 14 | 16.4 | 237 (12.2 s) |
 | **+ (h) unseen-ball evidence = submission** | **0.8017** | **0.5161** | 14 | 16.4 | 237 (12.2 s) |
 

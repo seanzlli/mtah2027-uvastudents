@@ -257,7 +257,7 @@ result. No graded frame is `X`. Outside the two halves we always write `X`.
 | second-half kick-off | `games.py` anchor | published by the organisers; FAQ.md: every graded frame before it is `D` |
 | ball-speed lag, jump limit | 0.2 s, 40 m/s | jitter suppression; above the hardest shot |
 | strike fallback | 3.5 s into tag | the starter notebook shows kick-off tags opening ~3.5 s early |
-| dead-ball tree threshold | 0.30 | the only fitted number in the model, chosen on two **held-out DFL matches** by spellF1 — never on this match (§5) |
+| dead-ball tree threshold | 0.30 | the only fitted number in the model, chosen on two **held-out DFL matches** by dead/alive F1 — never on this match (§5) |
 | dead-ball minimum run | 2 s | same Laws 8/13/15–17 minimum stoppage as above, applied to the tree's output |
 
 ## 5. Training data
@@ -333,7 +333,8 @@ Per-class F1 on the public window: for (c) through (f) alike H 0.8587, A 0.8227,
 with (g) the D class improves to 0.7198 and its recall from 0.370 to 0.793, which also lifts
 H and A precision (0.806 to 0.908 and 0.782 to 0.838) because they were absorbing dead frames.
 Rows (g) and (h) are identical because (h) leaves the output byte-identical once the tree is
-present (§4.1, §7).
+present (§4.1, §7). With step (g), the public-window possession count drops from 17 to 14
+(truth 17), which we note as a known trade-off of that step.
 
 A 1000-draw bootstrap gives a widest spellF1 interval of **~0.33** on this window. None of these
 gaps is significant here. The case for each step rests on its football logic and on the
