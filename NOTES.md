@@ -10,8 +10,8 @@ python selftest.py          # all correctness checks, ~5 s; exit code 0 = no FAI
 python my_model.py --steps "" --name ablation_base   # any subset of improvements, for ablation
 ```
 
-**Before uploading:** run `python my_model.py`, then `python selftest.py`. The `on-disk file`
-check proves the CSV you upload is exactly what the current code produces.
+**Checking the submitted file:** run `python my_model.py`, then `python selftest.py`. The
+`on-disk file` check confirms the CSV on disk is exactly what the current code produces.
 
 `selftest.py` checks:
 
