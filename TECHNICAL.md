@@ -7,7 +7,7 @@ Code: <https://github.com/seanzlli/mtah2027-uvastudents> · one command: `python
 
 We label every frame of the match as `H`, `A` or `D` with a transparent, rule-based model built
 on the automatic tracking and the Smart Tagging set pieces. It has no learned components and no
-training data. It is the starter baseline (nearest player to the ball), changed in five ways:
+training data. It is the starter baseline (nearest player to the ball), changed in six ways:
 
 1. **(a) Dead ball before restarts.** Smart Tagging set pieces, located exactly with the
    tracking.
@@ -19,6 +19,8 @@ training data. It is the starter baseline (nearest player to the ball), changed 
 5. **(e) More dead-ball evidence.** The ball is dead from leaving the pitch until play
    restarts. The stoppage covers each set-piece window up to the strike. After a goal it is
    dead until the kick-off.
+6. **(f) No abstentions.** Live segments in which the ball is never seen get the previous label
+   in the half. This is the scorer's own spellF1 fill, so no graded frame is `X`.
 
 Every parameter is a football quantity with a stated reason (§4.4). None was tuned on the
 public ground truth. Over the full match the model reports 257 possessions of 13.9 s mean,
@@ -40,7 +42,7 @@ separate them instead:
 
 **Dead ball matters for possessions, not just for the D class.** A missed stoppage between two
 spells of the same team merges two real possessions into one, and both are lost. In top-flight
-football the ball is out of play for roughly 35–45% of the time; our model puts 43% of graded
+football the ball is out of play for roughly 35–45% of the time; our model puts 44% of graded
 frames dead.
 
 **Why rules and not a learned model.** No labels on this match may be used. The public five
@@ -189,8 +191,17 @@ decides.
 
 A live segment where no team is ever confirmed takes the majority of the nearest-player answers.
 There are 36 such segments out of 150: median 2.8 s long, 25 of them shorter than 5 s, 155 s in
-total. In 12 of them the ball is never seen at all, and those get `X`. Outside the two halves we
-always write `X`. Overall, `X` is on 0.76% of graded frames.
+total.
+
+In 12 of them (1,200 frames) the ball is never seen at all, so there is no answer to take a
+majority of. **Step (f)** gives those frames the previous label in the same half. A live
+segment always starts right after a dead stretch, so that label is D, the stoppage before it.
+
+This is exactly the fill the scorer applies before computing spellF1
+(`possession_metrics.fill_abstentions`: forward-fill within each graded half, back-fill at its
+head). So the possession structure it scores cannot change, and per-frame metrics stop
+charging an abstention as a miss. `selftest.py` checks that the output equals that function's
+result. No graded frame is `X`. Outside the two halves we always write `X`.
 
 ### 4.4 Parameters
 
@@ -233,9 +244,10 @@ pipeline reproduces the published baseline scores, and for one sanity score per 
 | + (b) hysteresis | 0.6818 | 0.4824 | 17 | 259 (15.2 s) | |
 | + (c) missing ball | 0.7277 | 0.4941 | 17 | 254 (14.4 s) | 41.4% |
 | + (d) second-half kick-off | 0.7277 | 0.4941 | 17 | 254 (14.4 s) | 41.4% |
-| **+ (e) more dead-ball evidence: submission** | **0.7277** | **0.4941** | 17 | 257 (13.9 s) | 43.0% |
+| + (e) more dead-ball evidence | 0.7277 | 0.4941 | 17 | 257 (13.9 s) | 43.0% |
+| **+ (f) no graded `X`: submission** | **0.7277** | **0.4941** | 17 | 257 (13.9 s) | 43.7% |
 
-Per-class F1 on the public window, for (c), (d) and (e) alike: H 0.8587, A 0.8227, D 0.5016.
+Per-class F1 on the public window, for (c) through (f) alike: H 0.8587, A 0.8227, D 0.5016.
 
 A 1000-draw bootstrap gives a widest spellF1 interval of **~0.33** on this window. None of these
 gaps is significant here. The case for each step rests on its football logic and on the
@@ -245,11 +257,12 @@ Each idea was scored once after it was written, except (a), which was scored twi
 between (a)'s versions was decided from the input-data counts in §2, not from the score. A step
 was kept only if public spellF1 did not drop and the possession count stayed close to 17.
 
-(d) and (e) change 5 and 2,536 graded frames respectively, **none of them inside the public
-window**. That window is the first five minutes of the first half, and it has no ball-out run
-of ≥ 0.5 s and no set-piece window that adds frames. Their identical public scores therefore
-say nothing either way. Those steps rest on the rules of the game, the published kick-off and
-the more realistic stoppage lengths.
+(d), (e) and (f) change 5, 2,536 and 1,200 graded frames respectively, **none of them inside the
+public window**. That window is the first five minutes of the first half. It has no ball-out
+run of ≥ 0.5 s, no set-piece window that adds frames and no never-seen live segment. Their
+identical public scores therefore say nothing either way. Those steps rest on the rules of the
+game, the published kick-off and the more realistic stoppage lengths. Step (f) also cannot
+change spellF1 by construction.
 
 ## 7. Limitations, and what we would do with more time
 
@@ -273,7 +286,7 @@ the more realistic stoppage lengths.
   with no confirmed possessor, and as evidence in the hysteresis.
 - **Timing bias not investigated.** On the public window, changes land about 0.5 s early on
   average. Correcting it on 17 possessions would be tuning.
-- **No validation beyond five minutes.** The public window cannot test steps (d) and (e) at
+- **No validation beyond five minutes.** The public window cannot test steps (d) to (f) at
   all (§6). With more time we would source possession labels on *other* matches and check
   every threshold's sensitivity there.
 - **A learned model trained on external labelled matches, plus Viterbi decoding.** Train a
@@ -309,7 +322,7 @@ python evaluation/validate_submission.py evaluation/results/UvAStudents.csv
 python selftest.py                  # 14 checks; exit code 0 = no failures
 ```
 
-The expected SHA-256 is `150bad7eee44dd9854745fe38891e54e3a23206af0c9e3e9cc7ea07ea8c67c59`.
+The expected SHA-256 is `bff95b03f2f0d84bbce5f307384c8244454def2bfac4fb6bb43ce6ade82dc08b`.
 
 The run is deterministic:
 
@@ -319,10 +332,11 @@ The run is deterministic:
 - Two runs from scratch give the same hash.
 
 `python my_model.py --steps "" --name base` writes the baseline row of §6; `--steps a`, `ab`,
-`abc` and `abcd` write the next rows. `--steps abc` reproduces the previous submission
-exactly; its SHA-256 is `56ded60b…cd0fa`. `python analysis/compare.py abcd abcde` scores two
-step sets side by side, printing only the scoreboard numbers and per-class F1. `selftest.py`
-checks reproduction, validity, invariants and repository hygiene.
+`abc`, `abcd` and `abcde` write the next rows. Earlier submissions reproduce exactly:
+`--steps abcde` gives `150bad7e…c67c59`, and `--steps abc` gives `56ded60b…cd0fa`.
+`python analysis/compare.py abcde abcdef` scores two step sets side by side, printing only the
+scoreboard numbers and per-class F1. `selftest.py` checks reproduction, validity, invariants
+and repository hygiene.
 
 ## 9. Data handling and development process
 

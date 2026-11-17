@@ -31,7 +31,7 @@ import baseline  # noqa: E402  (starter/baseline.py: team table and CSV writer)
 TEAM_NAME = "UvAStudents"
 RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
 # The submitted model: every step that passed its sanity check (NOTES.md). Letters as in predict().
-DEFAULT_STEPS = "abcde"
+DEFAULT_STEPS = "abcdef"
 
 FPS = GAMES[GAME]["fps"]
 PITCH_LENGTH, PITCH_WIDTH = GAMES[GAME]["pitch"]
@@ -473,6 +473,37 @@ def goal_dead_mask(track, params=PARAMS):
 
 
 # --------------------------------------------------------------------------------------------
+# Step (f): no abstentions on graded frames
+# --------------------------------------------------------------------------------------------
+
+def fill_abstentions(labels):
+    """Every graded X becomes the previous label in its half (the first label, at the head).
+
+    The only graded X is a live segment in which the ball is never seen at all. For spellF1 the
+    scorer already reads such frames this way (possession_metrics.fill_abstentions: forward-fill
+    within each graded half, back-fill at its head), so the possession structure it scores does
+    not change; per-frame metrics stop charging the X as a miss. A live segment always follows
+    a dead stretch, so in practice the previous label is the stoppage before it: D.
+    """
+    out = labels.copy()
+    stats = {"filled": 0, "by_label": {}}
+    for _, first, last in half_video_blocks(GAME):
+        window = out[first:last + 1]
+        known = np.flatnonzero(window != "X")
+        if not len(known):
+            continue
+        carry = np.maximum.accumulate(np.where(window != "X", np.arange(len(window)), -1))
+        carry[carry < 0] = known[0]
+        filled = window[carry]
+        for label in np.unique(filled[window == "X"]):
+            stats["by_label"][str(label)] = stats["by_label"].get(str(label), 0) + int(
+                np.sum((window == "X") & (filled == label)))
+        stats["filled"] += int(np.sum(window == "X"))
+        out[first:last + 1] = filled
+    return out, stats
+
+
+# --------------------------------------------------------------------------------------------
 # Step (b): hysteresis possession switching
 # --------------------------------------------------------------------------------------------
 
@@ -612,6 +643,7 @@ def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
         a  dead ball before Smart Tagging restarts     b  hysteresis possession switching
         c  missing-ball handling                       d  second-half kick-off from games.py
         e  more dead-ball evidence: ball out of play, set-piece windows, goals
+        f  no graded X: previous label in the half, as the scorer's spellF1 fill
     """
     n = track["n_frames"]
     graded = graded_mask(n)
@@ -661,7 +693,12 @@ def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
         labels = baseline.smooth(nearest, params["baseline_window"])
         labels = np.where(dead, "D", labels)
 
-    return np.where(graded, labels, "X")
+    labels = np.where(graded, labels, "X")
+    if "f" in steps:
+        labels, stats = fill_abstentions(labels)
+        print("(f) graded X filled with the previous label in the half: {} frames {}".format(
+            stats["filled"], stats["by_label"]))
+    return labels
 
 
 def main():

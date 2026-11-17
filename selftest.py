@@ -93,9 +93,19 @@ def check_invariants(track, labels, graded):
     report("PASS" if outside == 0 else "FAIL", "ungraded = X",
            "{} ungraded frames are not X".format(outside))
 
-    x_share = float(np.mean(labels[graded] == "X"))
-    report("PASS" if x_share <= MAX_GRADED_X_SHARE else "WARN", "graded abstentions",
-           "{:.2%} of graded frames are X (limit {:.0%})".format(x_share, MAX_GRADED_X_SHARE))
+    if "f" in mm.DEFAULT_STEPS:
+        # Step f must be exactly the scorer's own spellF1 fill, applied to the model without it.
+        n_x = int(np.sum(labels[graded] == "X"))
+        unfilled = quiet_predict(track, mm.DEFAULT_STEPS.replace("f", ""))
+        halves = [(first, last + 1) for _, first, last in mm.half_video_blocks(mm.GAME)]
+        diff = int(np.sum(pm.fill_abstentions(codes_of(unfilled), halves) != codes_of(labels)))
+        report("PASS" if n_x == 0 and diff == 0 else "FAIL", "graded abstentions",
+               "{} graded frames are X; {} frames differ from the scorer's spellF1 fill".format(
+                   n_x, diff))
+    else:
+        x_share = float(np.mean(labels[graded] == "X"))
+        report("PASS" if x_share <= MAX_GRADED_X_SHARE else "WARN", "graded abstentions",
+               "{:.2%} of graded frames are X (limit {:.0%})".format(x_share, MAX_GRADED_X_SHARE))
 
     # Before each half's kick-off strike the ball is dead (found from tags + tracking; for the
     # second half the kick-off published in games.py when step d is on).

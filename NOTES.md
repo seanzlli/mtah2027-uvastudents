@@ -17,7 +17,8 @@ check proves the CSV you upload is exactly what the current code produces.
 
 - **baseline port:** `--steps ""` equals `baseline_smooth50` on every graded frame.
 - **submission valid:** the official validator's checks pass.
-- **invariants:** only H/A/D/X; X outside the halves; under 2% X inside them; D before each
+- **invariants:** only H/A/D/X; X outside the halves; no X inside them, filled exactly as the
+  scorer's own spellF1 fill (`possession_metrics.fill_abstentions`); D before each
   half's kick-off strike.
 - **plausibility (WARN only):** dead-ball share 25–55%; 100–600 possessions of mean 5–30 s.
 - **reproducible:** a second, independent parse of the raw tracking gives identical labels.
@@ -283,6 +284,34 @@ F1 H 0.8587, A 0.8227, D 0.5016). That meets the keep rule: spellF1 does not dro
 count stays at 17. But it also means the public window cannot test this step. The case for it
 is the football reasoning plus the more realistic stoppage lengths. **Kept.**
 
+## Step (f): no X on graded frames
+
+**What it does.** The only graded `X` came from step (b): a live segment in which the ball is
+never seen at all, so there is not even a nearest-player answer. Step (f) writes the previous
+label in the same half into those frames. An `X` at the very start of a half would take the
+first label of the half instead.
+
+**Why.** This is exactly what the scorer already does before computing spellF1
+(`possession_metrics.fill_abstentions`: forward-fill within each graded half, back-fill at its
+head). So the possession structure that spellF1 scores cannot change. The difference is that
+the per-frame metrics stop charging the `X` as a miss.
+
+A live segment always starts right after a dead stretch, so the previous label is the stoppage
+before it, D. Football-wise that is the natural reading: a few seconds of play with the ball
+never seen, sandwiched between two stoppages.
+
+**What it does on the full match.** 12 segments, 1,200 frames, all filled with D. No graded
+frame is `X` any more, and the dead-ball share goes from 43.0% to 43.7%. Possessions are
+unchanged at 257 (13.9 s).
+
+`selftest.py` checks that the output equals `fill_abstentions` applied to the model without
+step (f): 0 frames differ.
+
+**Sanity check.** None of the 1,200 changed frames is inside the public window. Public scores
+are identical (spellF1 0.4941, macroF1 0.7277, 17 possessions; F1 H 0.8587, A 0.8227,
+D 0.5016). spellF1 is unchanged, as the keep rule requires and as the construction
+guarantees. **Kept.**
+
 ## Sanity-check scores (public 5 min — pipeline check, not model selection)
 
 Each idea was scored once after it was written. (a) was scored twice; see its revision note.
@@ -294,10 +323,11 @@ Each idea was scored once after it was written. (a) was scored twice; see its re
 | + (b) hysteresis | 0.6818 | 0.4824 | 17 | 16.3 | 259 (15.2 s) |
 | + (c) missing ball (previous submission, tag `v1-fallback`) | 0.7277 | 0.4941 | 17 | 16.0 | 254 (14.4 s) |
 | + (d) second-half kick-off | 0.7277 | 0.4941 | 17 | 16.0 | 254 (14.4 s) |
-| **+ (e) more dead-ball evidence = submission** | **0.7277** | **0.4941** | 17 | 16.0 | 257 (13.9 s) |
+| + (e) more dead-ball evidence | 0.7277 | 0.4941 | 17 | 16.0 | 257 (13.9 s) |
+| **+ (f) no graded X = submission** | **0.7277** | **0.4941** | 17 | 16.0 | 257 (13.9 s) |
 
-Ground truth (public): 17 possessions of mean 14.2 s. Per-class F1 for (c), (d) and (e):
-H 0.8587, A 0.8227, D 0.5016. Steps (d) and (e) change no frame inside the public window.
+Ground truth (public): 17 possessions of mean 14.2 s. Per-class F1 for (c) through (f):
+H 0.8587, A 0.8227, D 0.5016. Steps (d), (e) and (f) change no frame inside the public window.
 
 **Noise.** `run_evaluation.py --bootstrap 1000` gives a spellF1 band of **~0.33** on the public
 window (17 possessions). None of the gaps above can be called significant there. The case for
@@ -316,9 +346,9 @@ realistic, not on these numbers.
   environment the file was built in, and `pip check` reports no conflicts. A fresh virtualenv
   install from these pins has not been tried.
 - **Two runs, same file.** Deleting the output and running twice gives the same SHA-256:
-  `150bad7eee44dd9854745fe38891e54e3a23206af0c9e3e9cc7ea07ea8c67c59`. Anyone with the data
-  bundle can check that this hash reproduces. `--steps abc` still reproduces the previous
-  submission (`56ded60b…cd0fa`) exactly.
+  `bff95b03f2f0d84bbce5f307384c8244454def2bfac4fb6bb43ce6ade82dc08b`. Anyone with the data
+  bundle can check that this hash reproduces. Earlier submissions still reproduce exactly:
+  `--steps abcde` gives `150bad7e…c67c59`, and `--steps abc` gives `56ded60b…cd0fa`.
 - **Validator:** OK, 199,319 rows, 257 possessions of mean 13.9 s. `selftest.py`: 14 checks,
   0 FAIL, 0 WARN.
 
@@ -338,7 +368,8 @@ realistic, not on these numbers.
 - **Evidence covers 27% of graded frames.** Possession across long live stretches without the
   ball relies on carrying. Team shape (which side is pushing up) could fill in.
 - **Smart Tagging `Team` tags on phases are unused.** They could give a prior on the possessor
-  for the 35 segments with no confirmed possessor (about 1,400 graded frames written as X).
+  for the 36 segments with no confirmed possessor (155 s). In the 12 of those where the ball
+  is never seen, step (f) currently writes D.
 - **Unused assets:** the broadcast feed and the homography (useful only for looking at errors
   on video).
 - On the public window, transitions land about 0.5 s early on average (`lat_f` −12.5).
