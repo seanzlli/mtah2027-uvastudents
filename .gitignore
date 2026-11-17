@@ -66,3 +66,6 @@ env/
 # derived tracking (old my_model.py cache location; it no longer caches) -- never commit
 cache/
 .ipynb_checkpoints/
+
+# Local working material: experiment scripts and research notes, not part of the submission.
+test/

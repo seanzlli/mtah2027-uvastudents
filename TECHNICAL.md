@@ -5,9 +5,11 @@ Code: <https://github.com/seanzlli/mtah2027-uvastudents> · one command: `python
 
 ## Summary
 
-We label every frame of the match as `H`, `A` or `D` with a transparent, rule-based model built
-on the automatic tracking and the Smart Tagging set pieces. It has no learned components and no
-training data. It is the starter baseline (nearest player to the ball), changed in six ways:
+We label every frame of the match as `H`, `A` or `D` with a largely rule-based model built on
+the automatic tracking and the Smart Tagging set pieces. Seven of its eight steps are
+hand-written football rules; the one exception, (g), is a single 31-node decision tree fitted on
+**other** matches' public data. **No labels from this match are used anywhere** (§5). It is the starter baseline
+(nearest player to the ball), changed in eight ways:
 
 1. **(a) Dead ball before restarts.** Smart Tagging set pieces, located exactly with the
    tracking.
@@ -21,10 +23,18 @@ training data. It is the starter baseline (nearest player to the ball), changed 
    dead until the kick-off.
 6. **(f) No abstentions.** Live segments in which the ball is never seen get the previous label
    in the half. This is the scorer's own spellF1 fill, so no graded frame is `X`.
+7. **(g) Dead ball from player positions.** A 31-node decision tree over ball-free player speed
+   and shape features, fitted on DFL open matches, catching untagged stoppages the rules miss
+   (fouls, injuries, substitutions).
+8. **(h) Dead-ball evidence with the ball unseen.** The backward search in (a) was ending early
+   because its evidence needs a visible ball. Fixing that brings corner, free-kick and throw-in
+   stoppages into their real-football ranges. Output-neutral on this match — (g) already covered
+   the frames — so the submission is byte-identical with or without it (§6).
 
-Every parameter is a football quantity with a stated reason (§4.4). None was tuned on the
-public ground truth. Over the full match the model reports 257 possessions of 13.9 s mean,
-against the baseline's 594 flickering spells of 7.2 s.
+Every parameter in steps (a)–(f) and (h) is a football quantity with a stated reason (§4.4);
+step (g) adds two more, set on held-out external matches. None was tuned on the public ground truth.
+Over the full match the model reports 237 possessions of 12.2 s mean, against the baseline's
+594 flickering spells of 7.2 s.
 
 ## 1. Approach, and why
 
@@ -42,14 +52,21 @@ separate them instead:
 
 **Dead ball matters for possessions, not just for the D class.** A missed stoppage between two
 spells of the same team merges two real possessions into one, and both are lost. In top-flight
-football the ball is out of play for roughly 35–45% of the time; our model puts 44% of graded
-frames dead.
+football the ball is out of play for roughly 35–45% of the time. Our model puts **54.7%** of
+graded frames dead, which is *above* that range and is the submission's clearest open question
+(§7).
 
-**Why rules and not a learned model.** No labels on this match may be used. The public five
-minutes (17 possessions) are a pipeline check, too small even to choose between two versions
-(§6). Within the time available we had no labelled data from other games. A model whose every
-threshold is a physical quantity (metres, m/s, seconds) can be checked by reading it, and it
-should transfer to another match unchanged.
+**Why mostly rules, and where we made an exception.** No labels on this match may be used, and
+the public five minutes (17 possessions) are a pipeline check, too small even to choose between
+two versions (§6). A model whose every threshold is a physical quantity (metres, m/s, seconds)
+can be checked by reading it, and should transfer to another match unchanged. We held to that
+for steps (a)–(f).
+
+We made one exception, step (g), because the rules' dead-ball **recall** was measurably poor —
+37% on the public window — and every hand-written generic stoppage detector we tried either did
+nothing or fixed recall by fragmenting possessions. The exception is kept small and auditable:
+one depth-4 tree, 31 nodes, fitted on other matches, committed as plain thresholds and executed
+in numpy. The submission needs no machine-learning library to run.
 
 **What the input data told us** (aggregates of tracking and tagging only, never the ground
 truth; `analysis/data_stats.py`):
@@ -83,6 +100,7 @@ truth; `analysis/data_stats.py`):
 | Tactical homography and video | **Not used by the algorithm.** We work in pitch coordinates. They are useful only for looking at errors. |
 | Broadcast video, ATD, homography | **Dropped.** They are not synchronised to the tactical timeline, no mapping is provided, and 34% of frames have no homography. Aligning them was not worth it in the time available. |
 | Public 5-minute ground truth | **Pipeline check only:** reproducing the published baseline scores, plus one sanity score per idea. Never training or tuning. |
+| **DFL/Sportec open Bundesliga data** (external, 4 matches) | **Used** to fit step (g): two matches to train the tree, two held out to set its parameters and verify. They publish a per-frame `ball_status`, which this match does not have. Permitted by `RULES.md` as data about other games (§5). |
 
 **Tried and dropped.**
 
@@ -118,7 +136,7 @@ truth; `analysis/data_stats.py`):
 
 ### 4.1 Ball alive or dead
 
-The ball is **dead (`D`)** in six cases:
+The ball is **dead (`D`)** in seven cases, and step (h) corrects the evidence the first one uses:
 
 1. **Before every tagged restart.**
    - **Strike.** The restart is the first frame in the tag window where the ball moves faster
@@ -135,8 +153,10 @@ The ball is **dead (`D`)** in six cases:
      per restart type: throw-in 20 s, goal kick 30 s, corner 40 s, free kick 60 s, kick-off
      after a goal 120 s.
 
-   Resulting median stoppages: corner 15 s, free kick 23 s, kick-off after goal 40 s,
-   throw-in 7.5 s, goal kick 5.2 s.
+   Resulting median stoppages, with (h): corner 32 s, free kick 35 s, kick-off after goal
+   116 s, throw-in 10 s, goal kick 6.6 s. Without (h) they were 15 s, 23 s, 40 s, 7.5 s and
+   5.2 s — so three of the five move from below their real-football ranges into them
+   (corner 20–40 s, free kick 20–60 s, throw-in 10–20 s).
 2. **Before each half's kick-off**, from the first graded frame to the strike.
    - **First half.** It is graded from its kick-off (FAQ.md), found from the
      `Kick Off (Start)` tag and the tracking.
@@ -161,6 +181,17 @@ The ball is **dead (`D`)** in six cases:
    The post-goal stoppages are already 83–91% D from cases 1 and 5.
 5. **Inside long ball gaps** without live-play tempo (§3).
 6. **From the moment the ball is seen beyond the lines** when it then vanishes (Law 9).
+7. **Wherever the decision tree says so** (step (g)). Cases 1–6 are anchored on a tag, on the
+   ball leaving the pitch, or on the ball going missing, so they cannot see a stoppage that has
+   none of those marks — a foul, an injury, a substitution, with the ball lying in play
+   position. Only 5 free kicks are tagged in the whole match. The tree reads **player
+   positions only** (speeds over 1/2/5/10 s, team spread, compactness, extents — 35 features,
+   no ball, since the ball is missing on 41% of graded frames), each converted to its
+   percentile *within this match* so a provider's pace of play cannot shift the thresholds.
+   Runs shorter than 2 s are dropped (Laws 8, 13, 15–17: a real stoppage is longer), which also
+   stops it sprinkling brief stoppages through live play. On a held-out DFL match the tree
+   scores 0.889 F1 against 0.756 for the field-at-walking-pace rule alone, almost entirely by
+   recall. Here it adds 17,662 D frames the rules missed — 8.9% of all 199,319 frames.
 
 We assign no owner to a dead ball. The task asks for `D` there.
 
@@ -226,14 +257,28 @@ result. No graded frame is `X`. Outside the two halves we always write `X`.
 | second-half kick-off | `games.py` anchor | published by the organisers; FAQ.md: every graded frame before it is `D` |
 | ball-speed lag, jump limit | 0.2 s, 40 m/s | jitter suppression; above the hardest shot |
 | strike fallback | 3.5 s into tag | the starter notebook shows kick-off tags opening ~3.5 s early |
+| dead-ball tree threshold | 0.30 | the only fitted number in the model, chosen on two **held-out DFL matches** by spellF1 — never on this match (§5) |
+| dead-ball minimum run | 2 s | same Laws 8/13/15–17 minimum stoppage as above, applied to the tree's output |
 
 ## 5. Training data
 
-**None.** No labelled dataset from any game was used, and nothing was learned. In particular,
-no hand labels or human-produced data about this match were used for anything. Parameters come
-from football knowledge and from aggregate statistics of the *input* data (tracking and
-tagging), never from the ground truth. The public five minutes were used only to confirm the
-pipeline reproduces the published baseline scores, and for one sanity score per idea.
+**One learned component, trained on other matches. Nothing from this match.**
+
+Step (g) is a decision tree fitted on **two DFL/Sportec open Bundesliga matches**, which publish
+a per-frame `ball_status` (alive/dead). **Two further DFL matches were held out** to set the two
+parameters in §4.4 and to check the result. `RULES.md` permits labelled data from other games
+and forbids labels from the graded match: none were used, for fitting, for choosing a threshold,
+or for feature selection. The tree is committed as `models/deadball_tree.json`;
+`training/train_deadball.py` reproduces it and is the only part of the repository that needs
+scikit-learn.
+
+Everything else is unlearned. Steps (a)–(f) and (h) are hand-written rules whose every parameter
+is a football quantity (§4.4), taken from football knowledge and from aggregate statistics of
+the *input* data (tracking and tagging), never from the ground truth.
+
+The public five minutes were used only to confirm the pipeline reproduces the published baseline
+scores, and for one sanity score per idea. No parameter anywhere in the model was chosen by its
+score on that window.
 
 ## 6. Results (public five minutes: a sanity check, not model selection)
 
@@ -245,9 +290,15 @@ pipeline reproduces the published baseline scores, and for one sanity score per 
 | + (c) missing ball | 0.7277 | 0.4941 | 17 | 254 (14.4 s) | 41.4% |
 | + (d) second-half kick-off | 0.7277 | 0.4941 | 17 | 254 (14.4 s) | 41.4% |
 | + (e) more dead-ball evidence | 0.7277 | 0.4941 | 17 | 257 (13.9 s) | 43.0% |
-| **+ (f) no graded `X`: submission** | **0.7277** | **0.4941** | 17 | 257 (13.9 s) | 43.7% |
+| + (f) no graded `X` | 0.7277 | 0.4941 | 17 | 257 (13.9 s) | 43.7% |
+| + (g) dead-ball tree | 0.8017 | 0.5161 | 14 | 237 (12.2 s) | 54.7% |
+| **+ (h) unseen-ball evidence: submission** | **0.8017** | **0.5161** | 14 | 237 (12.2 s) | 54.7% |
 
-Per-class F1 on the public window, for (c) through (f) alike: H 0.8587, A 0.8227, D 0.5016.
+Per-class F1 on the public window: for (c) through (f) alike H 0.8587, A 0.8227, D 0.5016;
+with (g) the D class improves to 0.7198 and its recall from 0.370 to 0.793, which also lifts
+H and A precision (0.806 to 0.908 and 0.782 to 0.838) because they were absorbing dead frames.
+Rows (g) and (h) are identical because (h) leaves the output byte-identical once the tree is
+present (§4.1, §7).
 
 A 1000-draw bootstrap gives a widest spellF1 interval of **~0.33** on this window. None of these
 gaps is significant here. The case for each step rests on its football logic and on the
@@ -266,10 +317,17 @@ change spellF1 by construction.
 
 ## 7. Limitations, and what we would do with more time
 
-- **Goal-kick and throw-in stoppages are still short** (median 5.2 s and 7.5 s, against
-  15–30 s and 10–20 s in real football). Step (e) lengthened them from 2.8 s and 5 s. The
-  backward search probably still stops at the ball being played back to the taker. A per-type
-  "ball comes to rest" anchor would fix this.
+- **Goal-kick stoppages are still short** (median 6.6 s against 15–30 s in real football).
+  We diagnosed and fixed the two general causes in step (h) — the backward search's evidence
+  needed a visible ball, and a strike while the whole field walked was treated as live play —
+  which brought corners, free kicks and throw-ins into range. Goal kicks did not follow, so
+  something specific to them remains: most likely the strike detector firing on the ball
+  crossing the goal line rather than on the kick. A per-type "ball comes to rest" anchor is
+  still the fix.
+- **Step (h) is output-neutral here.** It makes the rule layer correct — the stoppage lengths it
+  reports are now defensible — but on this match step (g) had already marked every frame the
+  corrected search reaches, so the submission is byte-identical. It is kept because the rules
+  should be right independently of the tree, not because it changes the score.
 - **Untagged stoppages with the ball in play position are missed:** free kicks, fouls, injuries,
   substitutions. The tagging lists only 5 free kicks. Step (e) catches untagged throw-ins and
   goal kicks when the ball is seen leaving the pitch, but nothing marks a foul. A generic
@@ -289,15 +347,43 @@ change spellF1 by construction.
 - **No validation beyond five minutes.** The public window cannot test steps (d) to (f) at
   all (§6). With more time we would source possession labels on *other* matches and check
   every threshold's sensitivity there.
-- **A learned model trained on external labelled matches, plus Viterbi decoding.** Train a
-  per-frame classifier (H / A / D) on matches with possession labels, never this one: for
-  example SkillCorner open data, or Metrica's open sample games. Its features would be the
-  same physical signals used here: nearest-player distances per team, ball speed, field tempo,
-  ball beyond the lines, and Smart Tagging context. Then decode the whole match with Viterbi
-  over an H / A / D hidden Markov model, whose transition costs are fitted on those games.
-  That would replace the hand-written hysteresis and dead-ball rules with one consistent
-  decision. Spell structure (no flicker, sharp boundaries) would come from the transition
-  penalties rather than from fixed confirm times.
+- **The dead share is 54.7% of graded frames, above the 35–45% a whole match of top-flight
+  football gives — but measured against the ground truth we have, step (g) made it better, not
+  worse.** On the public five minutes the truth is **19.6%** dead; steps (a)–(f) predicted
+  **9.3%**, under by more than half, and (a)–(g) predict **23.6%**, over by four points. So the
+  full-match 54.7% should not be read as the model having broken a figure that was previously
+  right: on the only frames where the answer is known, dead-ball recall went from 0.370 to
+  0.793 and the share moved from badly low to slightly high.
+
+  What remains genuinely open is the gap between that 54.7% and the ~46% true share we measure
+  on external matches, which we cannot resolve without full-match labels.
+
+  We tested the obvious fix and it does not hold. On the two held-out DFL matches the tree's
+  dead/alive F1 **peaks at the shipped threshold** (0.875 at 0.30, falling monotonically to
+  0.84 at 0.55 and 0.56 at 0.90), and its predicted dead share there is **46.5% / 48.7%
+  against a true 44.3% / 47.5%** — accurate to about two points. So the detector is correctly
+  calibrated wherever we can actually measure it, and raising the threshold to force the share
+  down destroys it. The 54.7% figure is therefore either genuine for this match or a residual
+  provider shift we cannot separate without full-match labels. What we can say is that the
+  Premier League benchmark (42–45% dead) is measured on Opta's definition of a delay, which
+  need not match what this ground truth calls `D`: on the public five minutes the truth is only
+  **19.6%** dead, far below either number.
+- **Ideas from a physics-rich pipeline that did not transfer.** We implemented and measured four
+  of them — a ball velocity-change proxy, a pass-by veto for aerial balls, touch-anchored switch
+  timing, and short-horizon reachability. Each is sound in isolation; none changed our score
+  beyond noise, because the 1 s hysteresis in (b) already absorbs the evidence noise they
+  remove. Reachability did help on DFL (+0.042 spellF1) but over-segmented here, because DFL's
+  possession convention is ~2.4× finer than this match's. That asymmetry is worth stating: any
+  idea whose benefit works through *more frequent switching* cannot be validated on DFL for use
+  here.
+- **Extending step (g) into a single decoded model.** Step (g) learns dead ball only, and its
+  output is merged with the rules by a union. The principled version is one H / A / D classifier
+  over the same external matches, decoded across the whole match with Viterbi, so that spell
+  structure — no flicker, sharp boundaries — comes from transition costs fitted on those games
+  rather than from a fixed 1 s confirm time and a 2 s minimum run. Features would add the
+  signals (b) already uses: nearest-player distance per team, ball speed, ball beyond the lines,
+  and Smart Tagging context. We did not attempt it: it replaces the two steps that carry most of
+  our score, and we could not have validated the replacement on five minutes of ground truth.
 
 ## 8. Reproduction
 
@@ -322,7 +408,7 @@ python evaluation/validate_submission.py evaluation/results/UvAStudents.csv
 python selftest.py                  # 14 checks; exit code 0 = no failures
 ```
 
-The expected SHA-256 is `bff95b03f2f0d84bbce5f307384c8244454def2bfac4fb6bb43ce6ade82dc08b`.
+The expected SHA-256 is `a896a8d8bd5140e7306c5ce8f17be654474c145fe279d608383e442523fd0b31`.
 
 The run is deterministic:
 
@@ -332,11 +418,17 @@ The run is deterministic:
 - Two runs from scratch give the same hash.
 
 `python my_model.py --steps "" --name base` writes the baseline row of §6; `--steps a`, `ab`,
-`abc`, `abcd` and `abcde` write the next rows. Earlier submissions reproduce exactly:
-`--steps abcde` gives `150bad7e…c67c59`, and `--steps abc` gives `56ded60b…cd0fa`.
-`python analysis/compare.py abcde abcdef` scores two step sets side by side, printing only the
+`abc`, `abcd`, `abcde` and `abcdef` write the next rows. Earlier submissions reproduce exactly:
+`--steps abcdef` gives `bff95b03…dc08b`, `--steps abcde` gives `150bad7e…c67c59`, and
+`--steps abc` gives `56ded60b…cd0fa`.
+`python analysis/compare.py abcdef abcdefg` scores two step sets side by side, printing only the
 scoreboard numbers and per-class F1. `selftest.py` checks reproduction, validity, invariants
 and repository hygiene.
+
+Step (g) reads the committed `models/deadball_tree.json` and walks it in numpy, so the run above
+needs nothing beyond `requirements.txt`. Refitting the tree is a separate, offline step:
+`training/train_deadball.py` needs scikit-learn and `databallpy` to download the DFL open
+matches, and is **not** required to reproduce the submission.
 
 ## 9. Data handling and development process
 
@@ -346,6 +438,10 @@ terms of use, no match data, extract of it, or submission file was shared with i
 - Scripts read `data/` locally and printed only summary numbers: counts, percentiles and
   scorer metrics.
 - The assistant never opened the ground-truth file or the scorer's per-transition reports.
+- Step (g)'s training data is the **public** DFL/Sportec open dataset, not this match. Only its
+  published per-frame `ball_status` was used as a label, and only aggregate metrics were ever
+  printed. The fitted tree is committed in full (`models/deadball_tree.json`, 31 nodes) so the
+  one learned part of the model can be read and checked like any other parameter.
 
 The repository contains no match data. `data/`, the submission CSV and any derived tracking
 are gitignored, and `selftest.py` checks this.

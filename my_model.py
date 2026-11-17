@@ -31,7 +31,7 @@ import baseline  # noqa: E402  (starter/baseline.py: team table and CSV writer)
 TEAM_NAME = "UvAStudents"
 RESULTS_DIR = os.path.join(ROOT, "evaluation", "results")
 # The submitted model: every step that passed its sanity check (NOTES.md). Letters as in predict().
-DEFAULT_STEPS = "abcdef"
+DEFAULT_STEPS = "abcdefgh"
 
 FPS = GAMES[GAME]["fps"]
 PITCH_LENGTH, PITCH_WIDTH = GAMES[GAME]["pitch"]
@@ -132,6 +132,22 @@ PARAMS = {
     # Law 1: 7.32 m between the posts. A goal is the ball over the goal line between them
     # (Law 10); out_margin is added for tracking error, as for the other lines.
     "goal_width": 7.32,
+
+    # ---- step (g): dead ball from a decision tree over player positions ----------------------
+    # Steps a/c/d/e are precise but miss a lot: on the public window they find 37% of the dead
+    # frames, and every miss is labelled H or A, so it costs the possession classes too.
+    # Untagged stoppages -- fouls, injuries, substitutions -- are missed entirely, because
+    # nothing in the tagging marks them. models/deadball_tree.json is a 31-node decision tree
+    # fitted on DFL open matches that publish a per-frame ball_status; it reads player speeds
+    # and team shape only, never the ball, because the ball is missing on 41% of frames.
+    # See deadball.py for the features and the per-match normalisation, and TECHNICAL.md
+    # section 5 for the training data. No labels from this match were used.
+    # Both values below were chosen on two held-out DFL matches, never on this match.
+    "deadball_threshold": 0.30,
+    # A stoppage lasts at least 2 s (Laws 8, 13, 15-17), as min_dead above. Applied to the
+    # tree's output this stops it sprinkling brief stoppages through live play, which would
+    # split real possessions -- the thing spellF1 punishes hardest.
+    "deadball_min_run": 50,
 }
 
 # Restarts that follow the ball leaving the pitch (Laws 15-17); their caps bound step (e).
@@ -288,25 +304,43 @@ def restart_frame(speed, start, end, params=PARAMS):
     return min(end - 1, start + params["restart_fallback_lead"]), False
 
 
-def stoppage_signals(track, params=PARAMS):
+def stoppage_signals(track, params=PARAMS, unseen_evidence=False):
     """Per-frame (evidence, struck).
 
     evidence -- something that only happens with the ball dead: the field at walking pace, the
                 ball beyond the lines, or the ball stationary (free kicks, corners, goal kicks
                 and kick-offs all require a stationary ball).
     struck   -- the opposite: the ball seen inside the pitch and moving like a pass or a shot.
+
+    unseen_evidence -- step (h), two corrections measured on this match's own restarts:
+
+    1. Both "beyond the lines" and "stationary" need the ball to be VISIBLE, so with the ball
+       unseen the only evidence left is the field at walking pace. But the tracking follows
+       play, and in the one-second window that ended 36 of 57 backward walks the ball was
+       visible on just 17% of frames while the field averaged 1.49 m/s -- players jogging back
+       into shape for a restart, which is above walking pace yet plainly not live play. So an
+       unseen ball with the field below live-play tempo is itself dead-ball evidence.
+    2. A strike of the ball while the WHOLE FIELD is at walking pace is not live play either --
+       it is the ball being returned to the taker (rolled back to the keeper, thrown to the
+       thrower-in). 6 of the 14 walks that stopped on a strike stopped on one of these.
     """
     speed = ball_speed(track, params)
     out = ball_out_of_play_position(track, params)
     visible = ~np.isnan(track["ball"][:, 0])
-    slow = np.nan_to_num(field_speed(track, params), nan=0.0) < params["stop_player_speed"]
+    field = np.nan_to_num(field_speed(track, params), nan=0.0)
+    slow = field < params["stop_player_speed"]
     with np.errstate(invalid="ignore"):
         stationary = speed < params["stationary_ball_speed"]
         struck = visible & ~out & (speed > params["restart_ball_speed"])
-    return slow | out | stationary, struck, speed
+    evidence = slow | out | stationary
+    if unseen_evidence:
+        evidence = evidence | (~visible & (field < params["live_tempo_speed"]))
+        struck = struck & ~slow
+    return evidence, struck, speed
 
 
-def restart_dead_mask(track, params=PARAMS, kickoff_2nd=None, tag_floor=False):
+def restart_dead_mask(track, params=PARAMS, kickoff_2nd=None, tag_floor=False,
+                      unseen_evidence=False):
     """D before every tagged restart, from when the ball went dead up to the strike.
 
     Every tag is trusted to mark a real restart, so it gets at least min_dead of D. From there
@@ -325,7 +359,7 @@ def restart_dead_mask(track, params=PARAMS, kickoff_2nd=None, tag_floor=False):
     as the ball struck inside the pitch, so the floor never reaches back past such a strike.
     """
     n = track["n_frames"]
-    evidence, struck, speed = stoppage_signals(track, params)
+    evidence, struck, speed = stoppage_signals(track, params, unseen_evidence)
     blocks = half_video_blocks(GAME)
     mask = np.zeros(n, dtype=bool)
     stats = {"tags": 0, "used": 0, "fallback": 0, "unknown_type": 0}
@@ -644,6 +678,8 @@ def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
         c  missing-ball handling                       d  second-half kick-off from games.py
         e  more dead-ball evidence: ball out of play, set-piece windows, goals
         f  no graded X: previous label in the half, as the scorer's spellF1 fill
+        g  dead ball from a decision tree over player positions (models/deadball_tree.json)
+        h  dead-ball evidence with the ball unseen, and no live strike while the field walks
     """
     n = track["n_frames"]
     graded = graded_mask(n)
@@ -658,7 +694,8 @@ def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
     else:
         dead = ~seen_within(nearest, params["baseline_window"])
     if "a" in steps:
-        restart_dead, stats = restart_dead_mask(track, params, kickoff_2nd, "e" in steps)
+        restart_dead, stats = restart_dead_mask(track, params, kickoff_2nd, "e" in steps,
+                                                "h" in steps)
         print("(a) restarts: {tags} tags, {used} used, {fallback} without a seen strike".format(
             **stats))
         if "e" in steps:
@@ -680,6 +717,24 @@ def predict(track, params=PARAMS, steps=DEFAULT_STEPS):
         new = (out_dead | goal_dead) & ~dead & graded
         print("    D frames added by out of play / goals: {}".format(int(new.sum())))
         dead |= out_dead | goal_dead
+    if "g" in steps:
+        import deadball
+        tree_dead = deadball.dead_mask(track, graded, HOME, FPS,
+                                       params["deadball_threshold"],
+                                       params["deadball_min_run"])
+        new = tree_dead & ~dead & graded
+        # The min-run filter drops stoppages shorter than 2 s, which is what keeps the tree
+        # from splitting real possessions. A dead run clipped by the edge of a graded half is
+        # censored rather than brief, though -- the first half is graded from its own
+        # kick-off -- so those runs are exempted instead of being re-asserted wholesale.
+        edge = np.zeros(n, dtype=bool)
+        for _, first, last in half_video_blocks(GAME):
+            edge[first] = edge[last] = True
+        dead = deadball.enforce_min_run((dead & graded) | tree_dead,
+                                        params["deadball_min_run"], edge) & graded
+        print("(g) dead-ball tree: fires on {:.1%} of graded frames, adding {} D frames "
+              "the rules missed ({:.1%} of graded)".format(
+                  float(np.mean(tree_dead[graded])), int(new.sum()), float(np.mean(new))))
 
     # Who has the ball while it is alive.
     if "b" in steps:

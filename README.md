@@ -1,15 +1,18 @@
 # UvAStudents: More than a Hack 2027, Phase 1 submission
 
 Ball possession (`H` / `A` / `D` for every frame) from the automatic tracking and the Smart
-Tagging set pieces. The model is rule-based, with no training data. It is the starter baseline
-plus six changes:
+Tagging set pieces. Seven of the model's eight steps are hand-written football rules; the one
+exception is a 31-node decision tree fitted on **other** matches' public data. No labels from
+this match are used anywhere. It is the starter baseline plus eight changes:
 
 - dead ball before restarts;
 - hysteresis possession switching;
 - missing-ball handling;
 - the published second-half kick-off;
 - more dead-ball evidence (ball out of play, set-piece windows, goals);
-- no `X` on graded frames (the scorer's own spellF1 fill).
+- no `X` on graded frames (the scorer's own spellF1 fill);
+- dead ball from a decision tree over player positions, for the stoppages nothing tags;
+- dead-ball evidence with the ball unseen (corrects the backward search in step 1).
 
 - **[TECHNICAL.md](TECHNICAL.md):** the technical document. Covers the approach, assets, rules,
   limitations and reproduction.
@@ -47,7 +50,7 @@ python my_model.py
 
 This writes `evaluation/results/UvAStudents.csv`: 199,319 rows, built from scratch in about
 3 s. It is deterministic, with no cache and no randomness. The expected SHA-256 is
-`bff95b03f2f0d84bbce5f307384c8244454def2bfac4fb6bb43ce6ade82dc08b`. Use `shasum -a 256`, or
+`a896a8d8bd5140e7306c5ce8f17be654474c145fe279d608383e442523fd0b31`. Use `shasum -a 256`, or
 `sha256sum` on Linux.
 
 ## Check
@@ -62,7 +65,10 @@ python selftest.py      # 14 checks: baseline reproduction, validity, reproducib
 
 | file | purpose |
 |---|---|
-| `my_model.py` | the model; `PARAMS` lists every value with its football reason; `--steps` runs any subset of the six improvements (`abcdef`) |
+| `my_model.py` | the model; `PARAMS` lists every value with its football reason; `--steps` runs any subset of the eight improvements (`abcdefgh`) |
+| `deadball.py` | step (g): the features and per-match normalisation, and the numpy tree walk |
+| `models/deadball_tree.json` | the fitted dead-ball tree, 31 nodes of plain thresholds |
+| `training/train_deadball.py` | refits that tree from DFL open data; **not** needed to reproduce the submission |
 | `selftest.py` | one-command correctness checks |
 | `check.sh` | validator plus scoreboard |
 | `analysis/compare.py` | scores two step sets side by side: scoreboard numbers and per-class F1 only |
