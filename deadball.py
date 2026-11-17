@@ -5,7 +5,7 @@ but poor recall: on the public window it catches only 37% of dead frames, and th
 misses are labelled H or A, which also costs the possession classes. Untagged stoppages --
 fouls, injuries, substitutions -- are missed entirely, because nothing marks them.
 
-What this is. A single decision tree of depth 4 (29 nodes), fitted on DFL/Sportec open
+What this is. A single decision tree of depth 4 (31 nodes), fitted on DFL/Sportec open
 Bundesliga matches that publish a per-frame ball_status. NO labels from the graded match are
 used, directly or indirectly (RULES.md). The tree is committed as models/deadball_tree.json:
 plain thresholds, walked here in numpy. The submission needs neither scikit-learn nor
