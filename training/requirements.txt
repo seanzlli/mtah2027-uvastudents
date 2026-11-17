@@ -1,0 +1,11 @@
+# Only for the offline refit of models/deadball_tree.json (training/train_deadball.py).
+# The submission does not need these: my_model.py runs on ../requirements.txt alone.
+# Install them in a separate virtualenv:
+#   python -m venv .venv-train
+#   .venv-train/bin/pip install -r training/requirements.txt
+#
+# NOTE: the test/ virtualenv the tree was fitted in was not on the machine this file was
+# written on. These pins are the latest PyPI releases on 2026-11-17, not versions read from
+# that environment. To confirm them, run `pip show databallpy scikit-learn` in that venv.
+databallpy==0.8.1
+scikit-learn==1.9.1
